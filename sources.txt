@@ -1,6 +1,6 @@
 https://github.com/abusaeeidx/Mrgify-BDIX-IPTV/raw/main/playlist.m3u
 https://iptv-org.github.io/iptv/countries/bd.m3u
 https://iptv-org.github.io/iptv/countries/in.m3u
-https://list.iptvcat.com/my_list/44ae57379abe174a04739a138ffe0dc9.m3u8
-https://list.iptvcat.com/my_list/68ff198662439b4435f87d83a996769f.m3u8
-https://list.iptvcat.com/my_list/256514c38e17672a0bf32256df7f012a.m3u8
+https://list.iptvcat.com/my_list/44ae57379abe174a04739a138ffe0dc9.m3u
+https://list.iptvcat.com/my_list/68ff198662439b4435f87d83a996769f.m3u
+https://list.iptvcat.com/my_list/256514c38e17672a0bf32256df7f012a.m3u
