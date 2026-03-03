@@ -1,31 +1,33 @@
 import requests
 
-# IPTV source URLs
-urls = [
-    "https://github.com/abusaeeidx/Mrgify-BDIX-IPTV/raw/main/playlist.m3u",
-    "https://iptv-org.github.io/iptv/countries/bd.m3u",
-    "https://iptv-org.github.io/iptv/countries/in.m3u"
-]
+SOURCE_FILE = "sources.txt"
+OUTPUT_FILE = "merged.m3u"
 
-output_file = "merged.m3u"
+def merge_playlists():
+    channels = set()
 
-channels = set()
+    with open(SOURCE_FILE, "r", encoding="utf-8") as f:
+        urls = [line.strip() for line in f if line.strip()]
 
-for url in urls:
-    try:
-        text = requests.get(url, timeout=10).text
-        lines = text.splitlines()
+    for url in urls:
+        try:
+            print(f"Fetching {url}")
+            response = requests.get(url, timeout=15)
+            text = response.text
 
-        for line in lines:
-            if line and not line.startswith("#"):
-                channels.add(line)
+            for line in text.splitlines():
+                if line and not line.startswith("#"):
+                    channels.add(line.strip())
 
-    except:
-        pass
+        except Exception as e:
+            print(f"Error fetching {url}: {e}")
 
-with open(output_file, "w", encoding="utf-8") as f:
-    f.write("#EXTM3U\n")
-    for ch in channels:
-        f.write(ch + "\n")
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write("#EXTM3U\n")
+        for ch in sorted(channels):
+            f.write(ch + "\n")
 
-print("Merged playlist created!")
+    print("Playlist merged successfully!")
+
+if __name__ == "__main__":
+    merge_playlists()
