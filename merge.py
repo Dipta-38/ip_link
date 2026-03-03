@@ -4,30 +4,32 @@ SOURCE_FILE = "sources.txt"
 OUTPUT_FILE = "merged.m3u"
 
 def merge_playlists():
-    channels = set()
+    entries = []
 
-    with open(SOURCE_FILE, "r", encoding="utf-8") as f:
+    with open(SOURCE_FILE, "r") as f:
         urls = [line.strip() for line in f if line.strip()]
 
     for url in urls:
         try:
             print(f"Fetching {url}")
-            response = requests.get(url, timeout=15)
-            text = response.text
+            text = requests.get(url, timeout=15).text
 
-            for line in text.splitlines():
-                if line and not line.startswith("#"):
-                    channels.add(line.strip())
+            lines = text.splitlines()
+
+            for i in range(len(lines)-1):
+                if lines[i].startswith("#EXTINF"):
+                    entries.append(lines[i])
+                    entries.append(lines[i+1])
 
         except Exception as e:
-            print(f"Error fetching {url}: {e}")
+            print(e)
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("#EXTM3U\n")
-        for ch in sorted(channels):
-            f.write(ch + "\n")
+        for entry in entries:
+            f.write(entry + "\n")
 
-    print("Playlist merged successfully!")
+    print("Merge completed!")
 
 if __name__ == "__main__":
     merge_playlists()
