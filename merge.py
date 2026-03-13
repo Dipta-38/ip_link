@@ -1,133 +1,100 @@
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
+from urllib.parse import urlparse
 
 SOURCE_FILE = "sources.txt"
 OUTPUT_FILE = "merged.m3u"
-TIMEOUT = 8  # Seconds to wait for response
-MAX_WORKERS = 30
+CHANNEL_TIMEOUT = 10  # Timeout for checking if channel is alive
+SKIP_KEYWORDS = ["Welcome to PlayZ TV"]  # Add more keywords to skip if needed
 
-# Simple headers that mimic VLC or IPTV player
-PLAYER_HEADERS = {
-    'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
-    'Accept': '*/*'
-}
-
-# Skip patterns
-SKIP_PATTERNS = [
-    "Welcome to PlayZ TV",
-    "Sponsored",
-    "promo/intro",
-]
-
-def stream_responds(url):
-    """Simple check: does the stream URL respond like in VLC?"""
+def is_channel_alive(url, timeout=CHANNEL_TIMEOUT):
+    """Check if a channel URL is responding"""
     try:
-        # Just like VLC, we try to connect and see if we get any response
-        response = requests.get(
-            url, 
-            headers=PLAYER_HEADERS,
-            timeout=TIMEOUT,
-            stream=True  # Don't download full content
-        )
-        
-        # Read just the first few bytes to confirm connection works
-        next(response.iter_content(chunk_size=1))
-        response.close()
-        
-        # Any 2xx response means it's working
+        response = requests.head(url, timeout=timeout, allow_redirects=True)
         return response.status_code < 400
-        
-    except Exception:
+    except requests.Timeout:
+        print(f"    ✗ Timeout")
+        return False
+    except requests.ConnectionError:
+        print(f"    ✗ Connection error")
+        return False
+    except Exception as e:
+        print(f"    ✗ Error: {str(e)[:50]}")
         return False
 
-def should_skip(extinf_line):
-    """Check if channel should be skipped"""
-    for pattern in SKIP_PATTERNS:
-        if pattern.lower() in extinf_line.lower():
+def should_skip_channel(extinf_line):
+    """Check if channel should be skipped based on keywords"""
+    for keyword in SKIP_KEYWORDS:
+        if keyword.lower() in extinf_line.lower():
             return True
     return False
 
-def process_playlist(url):
-    """Process a single playlist file"""
-    working_entries = []
-    entries_to_check = []
-    
-    try:
-        print(f"📡 Fetching: {url}")
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        
-        lines = response.text.splitlines()
-        
-        # Collect all entries
-        for i in range(len(lines)-1):
-            if lines[i].startswith("#EXTINF"):
-                if not should_skip(lines[i]):  # Skip unwanted channels
-                    entries_to_check.append({
-                        'info': lines[i],
-                        'url': lines[i+1].strip()
-                    })
-        
-        print(f"   Found {len(entries_to_check)} channels")
-        
-        # Check which ones respond
-        working_count = 0
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_to_entry = {
-                executor.submit(stream_responds, entry['url']): entry 
-                for entry in entries_to_check
-            }
-            
-            for future in as_completed(future_to_entry):
-                entry = future_to_entry[future]
-                if future.result():
-                    working_entries.append(entry['info'])
-                    working_entries.append(entry['url'])
-                    working_count += 1
-        
-        print(f"   ✅ {working_count} working channels")
-        return working_entries
-        
-    except Exception as e:
-        print(f"   ❌ Error: {e}")
-        return []
+def merge_playlists():
+    entries = []
+    checked_count = 0
+    alive_count = 0
+    dead_count = 0
+    skipped_count = 0
 
-def main():
-    # Read source URLs
-    with open(SOURCE_FILE, 'r') as f:
-        urls = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-    
-    print("=" * 60)
-    print("🎯 IPTV MERGER - Simple Channel Checker")
-    print("=" * 60)
-    print(f"Sources: {len(urls)}")
-    print("=" * 60)
-    
-    all_channels = []
-    total_working = 0
-    
-    # Process each source
-    for i, url in enumerate(urls, 1):
-        print(f"\n📁 Source {i}/{len(urls)}")
-        channels = process_playlist(url)
-        all_channels.extend(channels)
-        total_working += len(channels) // 2
-    
-    # Save results
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+    with open(SOURCE_FILE, "r") as f:
+        urls = [line.strip() for line in f if line.strip()]
+
+    print(f"Found {len(urls)} source(s)\n")
+
+    for source_url in urls:
+        try:
+            print(f"Fetching {source_url}")
+            response = requests.get(source_url, timeout=15)
+            text = response.text
+            lines = text.splitlines()
+
+            for i in range(len(lines)-1):
+                if lines[i].startswith("#EXTINF"):
+                    extinf_line = lines[i]
+                    channel_url = lines[i+1].strip()
+                    
+                    # Extract channel name for display
+                    channel_name = extinf_line.split(",")[-1] if "," in extinf_line else extinf_line
+                    
+                    # Skip if contains blocked keywords
+                    if should_skip_channel(extinf_line):
+                        print(f"  ⊘ Skipped (blocked): {channel_name[:60]}")
+                        skipped_count += 1
+                        continue
+                    
+                    # Check if channel is alive
+                    checked_count += 1
+                    print(f"  Checking: {channel_name[:60]}", end=" ")
+                    
+                    if is_channel_alive(channel_url):
+                        print("✓")
+                        entries.append(extinf_line)
+                        entries.append(channel_url)
+                        alive_count += 1
+                    else:
+                        dead_count += 1
+
+        except requests.Timeout:
+            print(f"  ✗ Source timeout: {source_url}")
+        except Exception as e:
+            print(f"  ✗ Error fetching {source_url}: {e}")
+
+    # Write output file
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("#EXTM3U\n")
-        f.write(f"# Merged: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"# Working channels: {total_working}\n\n")
-        
-        for line in all_channels:
-            f.write(line + '\n')
-    
-    print("\n" + "=" * 60)
-    print("✅ DONE!")
-    print(f"Working channels: {total_working}")
-    print(f"Saved to: {OUTPUT_FILE}")
-    print("=" * 60)
+        for entry in entries:
+            f.write(entry + "\n")
+
+    # Print summary
+    print("\n" + "="*60)
+    print("MERGE COMPLETED!")
+    print("="*60)
+    print(f"Channels checked:     {checked_count}")
+    print(f"Channels alive:       {alive_count} ✓")
+    print(f"Channels dead:        {dead_count} ✗")
+    print(f"Channels skipped:     {skipped_count} ⊘")
+    print(f"Total in output:      {alive_count}")
+    print(f"Output file:          {OUTPUT_FILE}")
+    print("="*60)
 
 if __name__ == "__main__":
-    main()
+    merge_playlists()
