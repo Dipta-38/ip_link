@@ -3,7 +3,7 @@ from urllib.parse import urlparse
 
 SOURCE_FILE = "sources.txt"
 OUTPUT_FILE = "merged.m3u"
-CHANNEL_TIMEOUT = 10  # Timeout for checking if channel is alive
+CHANNEL_TIMEOUT = 7  # Timeout for checking if channel is alive
 SKIP_KEYWORDS = ["Welcome to PlayZ TV"]  # Add more keywords to skip if needed
 
 def is_channel_alive(url, timeout=CHANNEL_TIMEOUT):
