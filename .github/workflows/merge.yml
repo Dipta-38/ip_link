@@ -1,4 +1,4 @@
-name: IPTV Auto Merge
+name: IPTV Auto Merge (BD Proxy Port 80)
 
 on:
   schedule:
@@ -8,31 +8,62 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
+    
     steps:
     - uses: actions/checkout@v4
-
+    
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-
+    
     - name: Install packages
       run: pip install requests
-
-    - name: Show runner public IP
-      run: curl -s https://api.ipify.org
-
-    - name: Run merge script
-      run: python merge.py
-
+    
+    - name: Test Bangladeshi Proxy (Port 80)
+      run: |
+        echo "🔍 Testing proxy 103.125.31.222:80"
+        export http_proxy="http://103.125.31.222:80"
+        export https_proxy="http://103.125.31.222:80"
+        
+        # Test if proxy works
+        IP=$(curl -s --max-time 10 --proxy $http_proxy https://api.ipify.org || echo "failed")
+        
+        if [ "$IP" != "failed" ] && [ ! -z "$IP" ]; then
+          echo "✅ Proxy working! IP: $IP"
+          echo "PROXY_WORKING=true" >> $GITHUB_ENV
+          
+          # Check if IP is from Bangladesh
+          COUNTRY=$(curl -s http://ip-api.com/json/$IP | jq -r .country)
+          if [ "$COUNTRY" = "Bangladesh" ]; then
+            echo "✅ Confirmed Bangladeshi IP!"
+            echo "PROXY_GOOD=true" >> $GITHUB_ENV
+          else
+            echo "⚠️ IP is from $COUNTRY, not Bangladesh"
+          fi
+        else
+          echo "❌ Proxy failed on port 80"
+          echo "PROXY_WORKING=false" >> $GITHUB_ENV
+        fi
+    
+    - name: Run merge script with BD proxy
+      env:
+        HTTP_PROXY: "http://103.125.31.222:80"
+        HTTPS_PROXY: "http://103.125.31.222:80"
+        NO_PROXY: "localhost,127.0.0.1"
+      run: |
+        if [ "$PROXY_WORKING" = "true" ]; then
+          echo "🚀 Running with Bangladeshi proxy (port 80)"
+          python merge.py
+        else
+          echo "⚠️ Proxy not working, running without proxy"
+          python merge.py
+        fi
+    
     - name: Commit playlist
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions@github.com"
         git add merged.m3u
-        git commit -m "Auto update IPTV playlist" || exit 0
+        git commit -m "Auto update IPTV playlist [BD Proxy Port 80]" || exit 0
         git push origin main
