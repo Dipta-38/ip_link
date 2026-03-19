@@ -1,4 +1,4 @@
-name: IPTV Auto Merge (HTTP Proxy)
+name: IPTV Auto Merge
 
 on:
   schedule:
@@ -14,6 +14,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Setup Python
       uses: actions/setup-python@v5
@@ -23,26 +25,18 @@ jobs:
     - name: Install packages
       run: pip install requests
     
-    - name: Test HTTP proxy
+    - name: Test HTTP Proxy
       run: |
-        echo "🔍 Testing HTTP proxy 103.125.31.222:80"
+        echo "🔍 Testing proxy 103.125.31.222:80"
         
         # Test HTTP through proxy
-        IP=$(curl -s --max-time 5 --proxy http://103.125.31.222:80 http://api.ipify.org || echo "failed")
+        IP=$(curl -s --max-time 5 --proxy http://103.125.31.222:80 http://api.ipify.org || echo "")
         
-        if [ "$IP" != "failed" ] && [ ! -z "$IP" ]; then
-          echo "✅ HTTP proxy working! IP: $IP"
-          
-          # Check location
-          COUNTRY=$(curl -s http://ip-api.com/json/$IP | jq -r .country)
-          echo "📍 Country: $COUNTRY"
-          
-          if [ "$COUNTRY" = "Bangladesh" ]; then
-            echo "✅ Confirmed Bangladeshi IP!"
-            echo "PROXY_HTTP=http://103.125.31.222:80" >> $GITHUB_ENV
-          fi
+        if [ ! -z "$IP" ]; then
+          echo "✅ Proxy working! IP: $IP"
+          echo "PROXY_HTTP=http://103.125.31.222:80" >> $GITHUB_ENV
         else
-          echo "❌ HTTP proxy not working"
+          echo "❌ Proxy not working, will run without proxy"
         fi
     
     - name: Run merge script
@@ -50,14 +44,21 @@ jobs:
         HTTP_PROXY: ${{ env.PROXY_HTTP }}
       run: |
         if [ ! -z "$HTTP_PROXY" ]; then
-          echo "🚀 Using HTTP proxy: $HTTP_PROXY"
+          echo "🚀 Using proxy: $HTTP_PROXY"
+        else
+          echo "⚠️ Running without proxy"
         fi
         python merge.py
     
-    - name: Commit playlist
+    - name: Commit and push
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions@github.com"
         git add merged.m3u
-        git diff --quiet && git diff --staged --quiet || git commit -m "Auto update IPTV playlist [HTTP Proxy]"
-        git push
+        
+        if git diff --cached --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Auto update IPTV playlist [$(date +'%Y-%m-%d %H:%M')]"
+          git push
+        fi
