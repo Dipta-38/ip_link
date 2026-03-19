@@ -1,8 +1,8 @@
-name: IPTV Auto Merge (BD Proxy 103.239.253.66:8080)
+name: IPTV Auto Merge (HTTP Proxy)
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # Every 6 hours
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -14,8 +14,6 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Setup Python
       uses: actions/setup-python@v5
@@ -25,51 +23,41 @@ jobs:
     - name: Install packages
       run: pip install requests
     
-    - name: Verify Bangladeshi Proxy
-      env:
-        HTTP_PROXY: "http://103.239.253.66:8080"
-        HTTPS_PROXY: "http://103.239.253.66:8080"
+    - name: Test HTTP proxy
       run: |
-        echo "🔍 Testing proxy: 103.239.253.66:8080"
-        IP=$(curl -s --max-time 10 --proxy http://103.239.253.66:8080 https://api.ipify.org)
+        echo "🔍 Testing HTTP proxy 103.125.31.222:80"
         
-        if [ ! -z "$IP" ]; then
-          echo "✅ Proxy working! IP: $IP"
+        # Test HTTP through proxy
+        IP=$(curl -s --max-time 5 --proxy http://103.125.31.222:80 http://api.ipify.org || echo "failed")
+        
+        if [ "$IP" != "failed" ] && [ ! -z "$IP" ]; then
+          echo "✅ HTTP proxy working! IP: $IP"
           
           # Check location
           COUNTRY=$(curl -s http://ip-api.com/json/$IP | jq -r .country)
-          CITY=$(curl -s http://ip-api.com/json/$IP | jq -r .city)
-          
-          echo "📍 Location: $CITY, $COUNTRY"
+          echo "📍 Country: $COUNTRY"
           
           if [ "$COUNTRY" = "Bangladesh" ]; then
             echo "✅ Confirmed Bangladeshi IP!"
-            echo "PROXY_WORKING=true" >> $GITHUB_ENV
-          else
-            echo "⚠️ Warning: IP is from $COUNTRY, not Bangladesh"
-            echo "PROXY_WORKING=true" >> $GITHUB_ENV
+            echo "PROXY_HTTP=http://103.125.31.222:80" >> $GITHUB_ENV
           fi
         else
-          echo "❌ Proxy failed"
-          echo "PROXY_WORKING=false" >> $GITHUB_ENV
+          echo "❌ HTTP proxy not working"
         fi
     
-    - name: Run merge script with proxy
+    - name: Run merge script
       env:
-        HTTP_PROXY: "http://103.239.253.66:8080"
-        HTTPS_PROXY: "http://103.239.253.66:8080"
-        NO_PROXY: "localhost,127.0.0.1"
-      run: python merge.py
+        HTTP_PROXY: ${{ env.PROXY_HTTP }}
+      run: |
+        if [ ! -z "$HTTP_PROXY" ]; then
+          echo "🚀 Using HTTP proxy: $HTTP_PROXY"
+        fi
+        python merge.py
     
-    - name: Commit and push
+    - name: Commit playlist
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions@github.com"
         git add merged.m3u
-        
-        if git diff --cached --quiet; then
-          echo "No changes to commit"
-        else
-          git commit -m "Auto update IPTV playlist [BD Proxy 103.239.253.66:8080]"
-          git push
-        fi
+        git diff --quiet && git diff --staged --quiet || git commit -m "Auto update IPTV playlist [HTTP Proxy]"
+        git push
