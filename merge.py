@@ -1,30 +1,29 @@
 import requests
 import os
-import time
 
 SOURCE_FILE = "sources.txt"
 OUTPUT_FILE = "merged.m3u"
 CHECK_TIMEOUT = 5
 
-# Bangladeshi proxy on port 8080
-PROXY = "http://103.239.253.66:8080"
+# Bangladeshi proxy on port 80 (HTTP only)
+PROXY = "http://103.125.31.222:80"
 proxies = {
     'http': PROXY,
-    'https': PROXY
+    # Don't use for https - it will fail
 }
 
 def verify_ip():
-    """Verify we're using the Bangladeshi proxy."""
+    """Verify we're using the Bangladeshi proxy (HTTP only)."""
     try:
-        # Test IP through proxy
+        # Use HTTP, not HTTPS for verification
         response = requests.get(
-            'https://api.ipify.org', 
-            proxies=proxies, 
+            'http://api.ipify.org',  # Changed to HTTP
+            proxies=proxies,
             timeout=10
         )
         ip = response.text
         
-        # Get location
+        # Get location via HTTP
         loc_response = requests.get(
             f'http://ip-api.com/json/{ip}',
             timeout=5
@@ -38,7 +37,6 @@ def verify_ip():
         print(f"📡 IP through proxy: {ip}")
         print(f"📍 Country: {loc_data.get('country', 'Unknown')}")
         print(f"🏙️  City: {loc_data.get('city', 'Unknown')}")
-        print(f"📡 ISP: {loc_data.get('isp', 'Unknown')}")
         
         if loc_data.get('country') == 'Bangladesh':
             print("✅ Using Bangladeshi IP - FILTERING WILL BE ACCURATE")
@@ -49,45 +47,54 @@ def verify_ip():
             
     except Exception as e:
         print(f"❌ Proxy verification failed: {e}")
-        print("⚠️ Running without proxy verification")
         return False
 
-def is_stream_available(url):
-    """Check if stream is available through proxy."""
+def fetch_playlist(url):
+    """Fetch playlist using HTTP only."""
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://www.google.com/',
-            'Accept': '*/*',
-            'Connection': 'keep-alive'
-        }
-
-        # Use proxy for the request
-        response = requests.head(
-            url, 
-            timeout=CHECK_TIMEOUT, 
-            headers=headers, 
-            allow_redirects=True,
-            proxies=proxies
+        # Convert HTTPS to HTTP if possible for playlist URLs
+        http_url = url.replace('https://', 'http://')
+        
+        response = requests.get(
+            http_url,
+            timeout=30,
+            proxies=proxies,
+            allow_redirects=True
         )
+        return response.text
+    except Exception as e:
+        print(f"❌ Failed to fetch {url}: {e}")
+        return None
 
-        # Filter 403 and 504
+def check_stream(url):
+    """Check stream availability (will work for HTTP streams)."""
+    try:
+        # For HTTPS streams, we might need to skip proxy
+        if url.startswith('https://'):
+            # Try without proxy for HTTPS
+            response = requests.head(
+                url,
+                timeout=CHECK_TIMEOUT,
+                allow_redirects=True
+            )
+        else:
+            # Use proxy for HTTP
+            response = requests.head(
+                url,
+                timeout=CHECK_TIMEOUT,
+                proxies=proxies,
+                allow_redirects=True
+            )
+        
         if response.status_code == 403:
             return False, "403"
         if response.status_code == 504:
             return False, "504"
-            
         return True, str(response.status_code)
-
-    except requests.exceptions.ProxyError as e:
-        print(f"🔄 Proxy error for: {url[:50]}... - {str(e)[:50]}")
-        return True, "proxy_error"  # Keep on proxy error
-    except requests.exceptions.Timeout:
-        return True, "timeout"
-    except requests.exceptions.ConnectionError:
-        return True, "connection_error"
+        
     except Exception as e:
-        return True, "error"
+        print(f"⚠️ Stream check error: {e}")
+        return True, "error"  # Keep on error
 
 def merge_playlists():
     entries = []
@@ -98,38 +105,37 @@ def merge_playlists():
     total_checked = 0
 
     print("\n" + "="*70)
-    print("🚀 IPTV MERGER WITH BANGLADESHI PROXY (103.239.253.66:8080)")
+    print("🚀 IPTV MERGER WITH HTTP PROXY (103.125.31.222:80)")
     print("="*70)
     
     # Verify proxy
     proxy_working = verify_ip()
     
     if not proxy_working:
-        print("\n⚠️ Continuing without proxy verification...")
+        print("\n⚠️ Proxy not working, will try without proxy for HTTPS")
     
     print("="*70)
 
     # Read source URLs
-    try:
-        with open(SOURCE_FILE, "r") as f:
-            urls = [line.strip() for line in f if line.strip()]
-        print(f"📋 Found {len(urls)} playlist sources")
-    except FileNotFoundError:
-        print(f"❌ {SOURCE_FILE} not found!")
-        return
+    with open(SOURCE_FILE, "r") as f:
+        urls = [line.strip() for line in f if line.strip()]
 
-    # Process each playlist
     for playlist_url in urls:
         try:
             print(f"\n📡 Fetching playlist: {playlist_url}")
-            # Use proxy for playlist fetch too
-            response = requests.get(
-                playlist_url, 
-                timeout=30,
-                proxies=proxies
-            )
-            lines = response.text.splitlines()
-            print(f"   ✅ Playlist fetched, processing streams...")
+            
+            # Try with proxy first, fallback to direct
+            if proxy_working and playlist_url.startswith('http://'):
+                text = fetch_playlist(playlist_url)
+            else:
+                # Direct fetch for HTTPS
+                response = requests.get(playlist_url, timeout=30)
+                text = response.text
+            
+            if not text:
+                continue
+                
+            lines = text.splitlines()
 
             i = 0
             while i < len(lines) - 1:
@@ -145,7 +151,7 @@ def merge_playlists():
                         continue
 
                     # Check stream
-                    available, status = is_stream_available(stream_url)
+                    available, status = check_stream(stream_url)
                     
                     if available:
                         entries.append(channel_name_line)
@@ -157,7 +163,6 @@ def merge_playlists():
                         elif status == "504":
                             gateway_count += 1
 
-                    # Show progress every 50 streams
                     if total_checked % 50 == 0:
                         print(f"📊 Progress: Checked {total_checked} streams...")
 
@@ -165,10 +170,8 @@ def merge_playlists():
                 else:
                     i += 1
 
-            print(f"   ✅ Finished playlist: {playlist_url}")
-
         except Exception as e:
-            print(f"❌ Error processing playlist {playlist_url}: {e}")
+            print(f"❌ Error: {playlist_url} - {e}")
 
     # Write final playlist
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
@@ -176,7 +179,6 @@ def merge_playlists():
         for entry in entries:
             f.write(entry + "\n")
 
-    # Print summary
     print("\n" + "="*70)
     print("✅ MERGE COMPLETED!")
     print("="*70)
@@ -185,12 +187,9 @@ def merge_playlists():
     print(f"🌐 504 Gateway Timeout removed: {gateway_count}")
     print(f"⏭️ PlayZ sponsored removed: {skipped_count}")
     print(f"📊 Total streams checked: {total_checked}")
-    print(f"📊 Final playlist entries: {len(entries)//2}")
     print("="*70)
-    print(f"🔌 Proxy used: {PROXY}")
-    print("="*70)
-    print(f"📁 Output saved to: {OUTPUT_FILE}")
-    print("="*70)
+    print(f"🔌 Proxy used: {PROXY} (HTTP only)")
+    print("="=70)
 
 if __name__ == "__main__":
     merge_playlists()
