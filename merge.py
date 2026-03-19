@@ -6,8 +6,8 @@ SOURCE_FILE = "sources.txt"
 OUTPUT_FILE = "merged.m3u"
 CHECK_TIMEOUT = 5
 
-# Bangladeshi proxy on port 80
-PROXY = "http://103.125.31.222:80"
+# Bangladeshi proxy on port 8080
+PROXY = "http://103.239.253.66:8080"
 proxies = {
     'http': PROXY,
     'https': PROXY
@@ -79,9 +79,9 @@ def is_stream_available(url):
             
         return True, str(response.status_code)
 
-    except requests.exceptions.ProxyError:
-        print(f"🔄 Proxy error for: {url[:50]}... (keeping)")
-        return True, "proxy_error"
+    except requests.exceptions.ProxyError as e:
+        print(f"🔄 Proxy error for: {url[:50]}... - {str(e)[:50]}")
+        return True, "proxy_error"  # Keep on proxy error
     except requests.exceptions.Timeout:
         return True, "timeout"
     except requests.exceptions.ConnectionError:
@@ -98,7 +98,7 @@ def merge_playlists():
     total_checked = 0
 
     print("\n" + "="*70)
-    print("🚀 IPTV MERGER WITH BANGLADESHI PROXY (PORT 80)")
+    print("🚀 IPTV MERGER WITH BANGLADESHI PROXY (103.239.253.66:8080)")
     print("="*70)
     
     # Verify proxy
@@ -110,8 +110,13 @@ def merge_playlists():
     print("="*70)
 
     # Read source URLs
-    with open(SOURCE_FILE, "r") as f:
-        urls = [line.strip() for line in f if line.strip()]
+    try:
+        with open(SOURCE_FILE, "r") as f:
+            urls = [line.strip() for line in f if line.strip()]
+        print(f"📋 Found {len(urls)} playlist sources")
+    except FileNotFoundError:
+        print(f"❌ {SOURCE_FILE} not found!")
+        return
 
     # Process each playlist
     for playlist_url in urls:
@@ -120,10 +125,11 @@ def merge_playlists():
             # Use proxy for playlist fetch too
             response = requests.get(
                 playlist_url, 
-                timeout=15,
+                timeout=30,
                 proxies=proxies
             )
             lines = response.text.splitlines()
+            print(f"   ✅ Playlist fetched, processing streams...")
 
             i = 0
             while i < len(lines) - 1:
@@ -134,7 +140,6 @@ def merge_playlists():
 
                     # Skip PlayZ sponsored
                     if "Welcome to PlayZ TV" in channel_name_line and "playztv.pages.dev/promo" in stream_url:
-                        print(f"⏭️ Removing PlayZ sponsored entry")
                         skipped_count += 1
                         i += 2
                         continue
@@ -149,12 +154,10 @@ def merge_playlists():
                     else:
                         if status == "403":
                             forbidden_count += 1
-                            print(f"🚫 403 filtered: {stream_url[:60]}...")
                         elif status == "504":
                             gateway_count += 1
-                            print(f"🌐 504 filtered: {stream_url[:60]}...")
 
-                    # Show progress
+                    # Show progress every 50 streams
                     if total_checked % 50 == 0:
                         print(f"📊 Progress: Checked {total_checked} streams...")
 
@@ -162,7 +165,7 @@ def merge_playlists():
                 else:
                     i += 1
 
-            print(f"✅ Finished playlist: {playlist_url}")
+            print(f"   ✅ Finished playlist: {playlist_url}")
 
         except Exception as e:
             print(f"❌ Error processing playlist {playlist_url}: {e}")
