@@ -5,12 +5,19 @@ on:
     - cron: '0 */6 * * *'
   workflow_dispatch:
 
+# Add these permissions
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}  # Use token for checkout
     
     - name: Setup Python
       uses: actions/setup-python@v5
@@ -20,50 +27,18 @@ jobs:
     - name: Install packages
       run: pip install requests
     
-    - name: Test Bangladeshi Proxy (Port 80)
-      run: |
-        echo "🔍 Testing proxy 103.125.31.222:80"
-        export http_proxy="http://103.125.31.222:80"
-        export https_proxy="http://103.125.31.222:80"
-        
-        # Test if proxy works
-        IP=$(curl -s --max-time 10 --proxy $http_proxy https://api.ipify.org || echo "failed")
-        
-        if [ "$IP" != "failed" ] && [ ! -z "$IP" ]; then
-          echo "✅ Proxy working! IP: $IP"
-          echo "PROXY_WORKING=true" >> $GITHUB_ENV
-          
-          # Check if IP is from Bangladesh
-          COUNTRY=$(curl -s http://ip-api.com/json/$IP | jq -r .country)
-          if [ "$COUNTRY" = "Bangladesh" ]; then
-            echo "✅ Confirmed Bangladeshi IP!"
-            echo "PROXY_GOOD=true" >> $GITHUB_ENV
-          else
-            echo "⚠️ IP is from $COUNTRY, not Bangladesh"
-          fi
-        else
-          echo "❌ Proxy failed on port 80"
-          echo "PROXY_WORKING=false" >> $GITHUB_ENV
-        fi
-    
     - name: Run merge script with BD proxy
       env:
         HTTP_PROXY: "http://103.125.31.222:80"
         HTTPS_PROXY: "http://103.125.31.222:80"
-        NO_PROXY: "localhost,127.0.0.1"
-      run: |
-        if [ "$PROXY_WORKING" = "true" ]; then
-          echo "🚀 Running with Bangladeshi proxy (port 80)"
-          python merge.py
-        else
-          echo "⚠️ Proxy not working, running without proxy"
-          python merge.py
-        fi
+      run: python merge.py
     
     - name: Commit playlist
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Use token for push
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions@github.com"
         git add merged.m3u
-        git commit -m "Auto update IPTV playlist [BD Proxy Port 80]" || exit 0
-        git push origin main
+        git diff --quiet && git diff --staged --quiet || git commit -m "Auto update IPTV playlist [BD Proxy Port 80]"
+        git push https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git HEAD:${{ github.ref }}
