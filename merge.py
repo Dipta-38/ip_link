@@ -1,106 +1,153 @@
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 SOURCE_FILE = "sources.txt"
 OUTPUT_FILE = "merged.m3u"
-CHECK_TIMEOUT = 5
+CHECK_TIMEOUT = 6
+MAX_WORKERS = 20  # speed (increase if needed)
+
+# OPTIONAL: Use Bangladeshi proxy if not running locally
+PROXIES = None
+# Example:
+# PROXIES = {
+#     "http": "http://BD_IP:PORT",
+#     "https": "http://BD_IP:PORT"
+# }
+
+USER_AGENTS = [
+    "VLC/3.0.18 LibVLC/3.0.18",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Lavf/58.20.100",
+]
+
 
 def is_stream_available(url):
-    """Check if stream is available, only filtering out 403 errors."""
+    """Check if stream is available (filters only real 403 errors)."""
+    
+    for ua in USER_AGENTS:
+        try:
+            headers = {
+                "User-Agent": ua,
+                "Referer": "http://example.com/",
+                "Accept": "*/*",
+                "Connection": "keep-alive",
+                "Icy-MetaData": "1"
+            }
+
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=CHECK_TIMEOUT,
+                stream=True,
+                allow_redirects=True,
+                proxies=PROXIES
+            )
+
+            # 🚫 True 403 block
+            if response.status_code == 403:
+                continue
+
+            # 🚫 Soft block detection (some servers fake 200)
+            text_sample = ""
+            try:
+                text_sample = response.text[:200].lower()
+            except:
+                pass
+
+            if "forbidden" in text_sample or "access denied" in text_sample:
+                continue
+
+            # ✅ Accept everything else
+            return True
+
+        except requests.exceptions.Timeout:
+            return True  # keep
+        except requests.exceptions.ConnectionError:
+            return True  # keep
+        except Exception:
+            return True  # keep
+
+    print(f"🚫 403 Forbidden (BD blocked): {url}")
+    return False
+
+
+def process_playlist(playlist_url):
+    entries = []
+    skipped = 0
+    forbidden = 0
+    kept = 0
+
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Referer': 'https://www.google.com/',
-            'Accept': '*/*',
-            'Connection': 'keep-alive'
-        }
-        
-        # Try HEAD request first
-        response = requests.head(url, timeout=CHECK_TIMEOUT, headers=headers, allow_redirects=True)
-        
-        # Check specifically for 403 Forbidden
-        if response.status_code == 403:
-            print(f"🚫 Filtering out 403 Forbidden: {url}")
-            return False
-        
-        # Keep all other responses (including 404, 500, timeouts, etc.)
-        # For non-200 responses, we'll still keep them as they might work in some players
-        if response.status_code != 200:
-            print(f"⚠️ Keeping non-200 (HTTP {response.status_code}) stream: {url}")
-        
-        return True
-        
-    except requests.exceptions.Timeout:
-        print(f"⏱️ Timeout but KEEPING (may work in player): {url}")
-        return True  # Keep timeouts - they might work in actual player
-    except requests.exceptions.ConnectionError:
-        print(f"🔌 Connection error but KEEPING (may work in player): {url}")
-        return True  # Keep connection errors - they might work in actual player
+        print(f"\n📡 Fetching: {playlist_url}")
+        text = requests.get(playlist_url, timeout=15).text
+        lines = text.splitlines()
+
+        i = 0
+        while i < len(lines) - 1:
+            if lines[i].startswith("#EXTINF"):
+                info = lines[i]
+                stream_url = lines[i + 1]
+
+                # Remove PlayZ promo
+                if "Welcome to PlayZ TV" in info and "playztv.pages.dev/promo" in stream_url:
+                    print("⏭️ Skipped PlayZ promo")
+                    skipped += 1
+                    i += 2
+                    continue
+
+                if is_stream_available(stream_url):
+                    entries.append(info)
+                    entries.append(stream_url)
+                    kept += 1
+                else:
+                    forbidden += 1
+
+                i += 2
+            else:
+                i += 1
+
     except Exception as e:
-        print(f"⚠️ Error but KEEPING stream: {url} - {e}")
-        return True  # Keep all other errors
+        print(f"❌ Error: {playlist_url} -> {e}")
+
+    return entries, skipped, forbidden, kept
+
 
 def merge_playlists():
-    entries = []
-    skipped_count = 0
-    forbidden_count = 0
-    kept_count = 0
+    all_entries = []
+    total_skipped = 0
+    total_forbidden = 0
+    total_kept = 0
 
     with open(SOURCE_FILE, "r") as f:
         urls = [line.strip() for line in f if line.strip()]
 
-    for playlist_url in urls:
-        try:
-            print(f"\n📡 Fetching playlist: {playlist_url}")
-            text = requests.get(playlist_url, timeout=15).text
-            lines = text.splitlines()
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(process_playlist, url) for url in urls]
 
-            i = 0
-            while i < len(lines) - 1:
-                if lines[i].startswith("#EXTINF"):
-                    channel_name_line = lines[i]
-                    stream_url = lines[i+1]
-                    
-                    # Skip the specific PlayZ sponsored entry
-                    if "Welcome to PlayZ TV" in channel_name_line and "playztv.pages.dev/promo" in stream_url:
-                        print(f"⏭️ Removing PlayZ sponsored entry")
-                        skipped_count += 1
-                        i += 2
-                        continue
-                    
-                    # Check if stream is available (only filters 403)
-                    if is_stream_available(stream_url):
-                        entries.append(channel_name_line)
-                        entries.append(stream_url)
-                        kept_count += 1
-                    else:
-                        forbidden_count += 1
-                    
-                    i += 2
-                else:
-                    i += 1
+        for future in as_completed(futures):
+            entries, skipped, forbidden, kept = future.result()
+            all_entries.extend(entries)
+            total_skipped += skipped
+            total_forbidden += forbidden
+            total_kept += kept
 
-        except Exception as e:
-            print(f"❌ Error processing playlist {playlist_url}: {e}")
-
-    # Write the merged playlist
+    # Write output
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("#EXTM3U\n")
-        for entry in entries:
-            f.write(entry + "\n")
+        for line in all_entries:
+            f.write(line + "\n")
 
-    # Print summary
-    print("\n" + "="*60)
-    print("✅ MERGE COMPLETED!")
-    print("="*60)
-    print(f"📺 Total channels kept: {kept_count}")
-    print(f"🚫 403 Forbidden channels removed: {forbidden_count}")
-    print(f"⏭️ PlayZ sponsored entries removed: {skipped_count}")
-    print(f"📊 Total entries in final playlist: {len(entries)//2}")
-    print("="*60)
-    print(f"📁 Output saved to: {OUTPUT_FILE}")
-    print("\n📝 Note: Only 403 Forbidden errors were filtered.")
-    print("   All other channels (timeouts, connection errors, etc.) were KEPT.")
-    print("="*60)
+    # Summary
+    print("\n" + "=" * 60)
+    print("✅ MERGE COMPLETED")
+    print("=" * 60)
+    print(f"📺 Channels kept: {total_kept}")
+    print(f"🚫 403 (BD blocked) removed: {total_forbidden}")
+    print(f"⏭️ Promo skipped: {total_skipped}")
+    print(f"📊 Final entries: {len(all_entries)//2}")
+    print(f"📁 Saved to: {OUTPUT_FILE}")
+    print("=" * 60)
+
 
 if __name__ == "__main__":
     merge_playlists()
