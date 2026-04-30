@@ -92,12 +92,39 @@ jobs:
             echo "USE_BD_PROXY=false" >> $GITHUB_ENV
           
           else
-            echo "⚠️  No proxy/VPN configured - using default connection"
-            echo "   To use Bangladesh IP, add secrets:"
+            echo "⚠️  No proxy/VPN configured - attempting free Bangladesh proxy fallback"
+            echo "   To use a stable proxy, add secrets:"
             echo "   - BD_PROXY_HTTP and BD_PROXY_HTTPS for HTTP proxy"
             echo "   - OPENVPN_CONFIG for OpenVPN (base64 encoded .ovpn)"
             echo "   - WIREGUARD_CONFIG for WireGuard (base64 encoded config)"
-            echo "USE_BD_PROXY=false" >> $GITHUB_ENV
+            
+            PROXY=$(python3 - <<'PY'
+import requests
+sources = [
+    'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=BD&ssl=all&anonymity=elite',
+    'https://www.proxy-list.download/api/v1/get?type=http&anon=elite&country=BD',
+]
+for url in sources:
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        for line in r.text.splitlines():
+            if line and ':' in line:
+                print(line.strip())
+                raise SystemExit(0)
+    except Exception:
+        continue
+PY
+)
+            if [ -n "$PROXY" ]; then
+              echo "✅ Free Bangladesh proxy found: $PROXY"
+              echo "BD_PROXY_HTTP=$PROXY" >> $GITHUB_ENV
+              echo "BD_PROXY_HTTPS=$PROXY" >> $GITHUB_ENV
+              echo "USE_BD_PROXY=true" >> $GITHUB_ENV
+            else
+              echo "⚠️  No free Bangladesh proxy available. Falling back to default connection."
+              echo "USE_BD_PROXY=false" >> $GITHUB_ENV
+            fi
           fi
 
       # Test connectivity to verify Bangladesh IP
