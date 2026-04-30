@@ -1,0 +1,85 @@
+name: IPTV Playlist Merge
+
+on:
+  # Run on schedule (daily at 00:00 UTC)
+  schedule:
+    - cron: '0 0 * * *'
+  
+  # Run on push to main branch
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'sources.txt'
+      - 'merge.py'
+      - 'merge.yml'
+      - '.github/workflows/merge.yml'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  merge-playlists:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pyyaml
+      
+      - name: Run playlist merger
+        run: python merge.py
+      
+      - name: Check if playlist changed
+        id: check
+        run: |
+          if git diff --quiet merged.m3u; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Commit and push merged playlist
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add merged.m3u
+          git commit -m "Update merged playlist - $(date -u +'%Y-%m-%d %H:%M:%S')"
+          git push
+      
+      - name: Upload merged playlist as artifact
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: merged-playlist
+          path: merged.m3u
+          retention-days: 7
+      
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Playlist Merge Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ✅ Success" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          CHANNEL_COUNT=$(grep -c "^#EXTINF:" merged.m3u || echo "0")
+          echo "**Channels:** $CHANNEL_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Filtered IP:** 103.73.185.62" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Last Updated:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
