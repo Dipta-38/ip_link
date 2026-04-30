@@ -1,4 +1,4 @@
-name: IPTV Auto Merge
+name: IPTV Auto Merge - Bangladesh Filter
 
 on:
   schedule:
@@ -25,30 +25,84 @@ jobs:
     - name: Install packages
       run: pip install requests
     
-    - name: Test HTTP Proxy
+    - name: Configure Bangladeshi Proxy
+      env:
+        PROXY_LIST: |
+          http://103.125.31.222:80
+          http://103.144.182.1:3128
+          http://103.105.187.38:8080
+          http://180.163.200.242:3128
       run: |
-        echo "🔍 Testing proxy 103.125.31.222:80"
+        echo "🔍 Testing Bangladeshi proxies..."
         
-        # Test HTTP through proxy
-        IP=$(curl -s --max-time 5 --proxy http://103.125.31.222:80 http://api.ipify.org || echo "")
+        WORKING_PROXY=""
         
-        if [ ! -z "$IP" ]; then
-          echo "✅ Proxy working! IP: $IP"
-          echo "PROXY_HTTP=http://103.125.31.222:80" >> $GITHUB_ENV
+        # Try each proxy in the list
+        while IFS= read -r proxy; do
+          [ -z "$proxy" ] && continue
+          
+          echo "Testing: $proxy"
+          
+          # Test if proxy works
+          IP=$(timeout 5 curl -s --max-time 5 --proxy "$proxy" http://api.ipify.org 2>/dev/null || echo "")
+          
+          if [ ! -z "$IP" ]; then
+            # Verify it's Bangladesh IP
+            COUNTRY=$(timeout 5 curl -s "http://ip-api.com/json/${IP}?fields=countryCode" 2>/dev/null | grep -o '"countryCode":"[^"]*"' | cut -d'"' -f4)
+            
+            if [ "$COUNTRY" = "BD" ]; then
+              echo "✅ Found working Bangladeshi proxy: $proxy (IP: $IP)"
+              WORKING_PROXY="$proxy"
+              break
+            else
+              echo "❌ Proxy IP is not from Bangladesh: $IP (Country: $COUNTRY)"
+            fi
+          else
+            echo "❌ Proxy failed or timeout: $proxy"
+          fi
+        done <<< "$PROXY_LIST"
+        
+        if [ -z "$WORKING_PROXY" ]; then
+          # Try GitHub secrets proxy if set
+          if [ ! -z "${{ secrets.BANGLADESHI_PROXY }}" ]; then
+            echo "Testing GitHub secrets proxy..."
+            IP=$(timeout 5 curl -s --max-time 5 --proxy "${{ secrets.BANGLADESHI_PROXY }}" http://api.ipify.org 2>/dev/null || echo "")
+            
+            if [ ! -z "$IP" ]; then
+              COUNTRY=$(timeout 5 curl -s "http://ip-api.com/json/${IP}?fields=countryCode" 2>/dev/null | grep -o '"countryCode":"[^"]*"' | cut -d'"' -f4)
+              
+              if [ "$COUNTRY" = "BD" ]; then
+                echo "✅ Using GitHub secrets proxy (IP: $IP)"
+                WORKING_PROXY="${{ secrets.BANGLADESHI_PROXY }}"
+              fi
+            fi
+          fi
+        fi
+        
+        if [ ! -z "$WORKING_PROXY" ]; then
+          echo "HTTP_PROXY=$WORKING_PROXY" >> $GITHUB_ENV
+          echo "HTTPS_PROXY=$WORKING_PROXY" >> $GITHUB_ENV
+          echo "PROXY_ACTIVE=true" >> $GITHUB_ENV
         else
-          echo "❌ Proxy not working, will run without proxy"
+          echo "❌ ERROR: No working Bangladeshi proxy found!"
+          echo "⚠️  Please set BANGLADESHI_PROXY in GitHub Secrets"
+          exit 1
         fi
     
     - name: Run merge script
       env:
-        HTTP_PROXY: ${{ env.PROXY_HTTP }}
+        HTTP_PROXY: ${{ env.HTTP_PROXY }}
+        HTTPS_PROXY: ${{ env.HTTPS_PROXY }}
       run: |
-        if [ ! -z "$HTTP_PROXY" ]; then
-          echo "🚀 Using proxy: $HTTP_PROXY"
-        else
-          echo "⚠️ Running without proxy"
-        fi
+        echo "🚀 Starting IPTV merge with Bangladeshi IP filter..."
         python merge.py
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Merge completed successfully"
+        else
+          echo "❌ Merge script failed"
+          exit 1
+        fi
     
     - name: Commit and push
       run: |
@@ -59,6 +113,6 @@ jobs:
         if git diff --cached --quiet; then
           echo "No changes to commit"
         else
-          git commit -m "Auto update IPTV playlist [$(date +'%Y-%m-%d %H:%M')]"
+          git commit -m "Auto update IPTV playlist - Bangladesh filtered [$(date +'%Y-%m-%d %H:%M')]"
           git push
         fi
