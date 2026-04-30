@@ -11,11 +11,17 @@ This script:
 - ✅ Creates a filtered `merged.m3u` playlist with working channels
 - ✅ Runs automatically via GitHub Actions every 6 hours
 
-## Important: Bangladesh IP Required
+## ⚠️ Important: Bangladesh IP Required
 
 ⚠️ **This script REQUIRES a Bangladeshi IP proxy to work correctly.**
 
 Without a Bangladeshi IP, the script cannot determine which channels are available in Bangladesh. The script will refuse to run if a valid Bangladesh IP is not detected.
+
+### Having Proxy Issues?
+
+If you see: `❌ ERROR: No working Bangladeshi proxy found!`
+
+→ **See: [PROXY_EMERGENCY_GUIDE.md](PROXY_EMERGENCY_GUIDE.md)** (Quick fix - 5 minutes)
 
 ## Setup Instructions
 

@@ -101,13 +101,30 @@ def test_from_env():
 def test_popular_proxies():
     """Test a list of popular Bangladesh proxies"""
     
+    # Extended list of Bangladesh proxies - these change frequently!
     proxies = [
+        # Tier 1 - Most reliable Bangladesh IP ranges
         "http://103.125.31.222:80",
         "http://103.144.182.1:3128",
         "http://103.105.187.38:8080",
         "http://180.163.200.242:3128",
         "http://103.141.100.78:80",
         "http://103.144.202.188:80",
+        
+        # Tier 2 - Additional Bangladesh proxies
+        "http://103.140.201.22:80",
+        "http://103.140.201.23:80",
+        "http://103.148.48.65:80",
+        "http://180.163.220.66:3128",
+        "http://180.163.220.67:3128",
+        "http://103.106.233.226:80",
+        "http://103.106.239.108:80",
+        
+        # Tier 3 - Alternative Bangladesh ISP ranges
+        "http://103.55.36.107:80",
+        "http://103.55.36.108:80",
+        "http://103.109.177.247:8080",
+        "http://103.109.177.248:8080",
     ]
     
     print("="*70)
