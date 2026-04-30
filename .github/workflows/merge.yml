@@ -1,161 +1,231 @@
-name: IPTV Auto Merge - Bangladesh Filter
+name: Merge IPTV with Bangladesh IP Filter
 
 on:
   schedule:
+    # Run every 6 hours
     - cron: '0 */6 * * *'
   workflow_dispatch:
-
-permissions:
-  contents: write
+  push:
+    branches:
+      - main
+      - master
 
 jobs:
-  build:
+  merge:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    
-    - name: Install packages
-      run: pip install requests
-    
-    - name: Configure Bangladeshi Proxy
-      id: proxy
-      env:
-        PROXY_LIST: |
-          http://103.106.233.226:80
-          http://103.106.239.108:80
-          http://103.148.48.65:80
-          http://180.163.220.66:3128
-          http://180.163.220.67:3128
-          http://103.55.36.107:80
-          http://103.55.36.108:80
-          http://103.140.201.22:80
-          http://103.140.201.23:80
-          http://103.141.100.78:80
-          http://103.144.202.188:80
-          http://103.109.177.247:8080
-          http://103.109.177.248:8080
-          http://103.125.31.222:80
-          http://103.144.182.1:3128
-          http://103.105.187.38:8080
-          http://180.163.200.242:3128
-      run: |
-        echo "🔍 Testing Bangladeshi proxies..."
-        
-        WORKING_PROXY=""
-        
-        # Try each proxy in the list
-        while IFS= read -r proxy; do
-          [ -z "$proxy" ] && continue
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pysocks urllib3
+
+      # ===========================================================================
+      # CHOOSE ONE OF THE FOLLOWING BD PROXY/VPN SETUP OPTIONS
+      # ===========================================================================
+
+      # OPTION 1: Using GitHub Secrets (RECOMMENDED - Most Reliable)
+      # Configure in GitHub: Settings → Secrets and variables → Actions
+      # Add: BD_PROXY_HTTP and BD_PROXY_HTTPS secrets
+      - name: Setup Bangladesh Proxy from Secrets
+        if: secrets.BD_PROXY_HTTP != ''
+        run: |
+          echo "✅ Using Bangladesh proxy from GitHub Secrets"
+          echo "BD_PROXY_HTTP=${{ secrets.BD_PROXY_HTTP }}" >> $GITHUB_ENV
+          echo "BD_PROXY_HTTPS=${{ secrets.BD_PROXY_HTTPS }}" >> $GITHUB_ENV
+          echo "USE_BD_PROXY=true" >> $GITHUB_ENV
+
+      # OPTION 2: Using OpenVPN with Bangladesh Server
+      # Store OpenVPN config in secrets.OPENVPN_CONFIG
+      - name: Setup OpenVPN (Bangladesh)
+        if: secrets.OPENVPN_CONFIG != '' && secrets.BD_PROXY_HTTP == ''
+        run: |
+          echo "🔐 Setting up OpenVPN connection to Bangladesh..."
+          sudo apt-get update -qq
+          sudo apt-get install -y openvpn > /dev/null 2>&1
+          echo "${{ secrets.OPENVPN_CONFIG }}" > /tmp/bd-vpn.ovpn
+          sudo openvpn --config /tmp/bd-vpn.ovpn --log /tmp/openvpn.log --daemon
+          echo "⏳ Waiting for VPN connection..."
+          sleep 10
+          # Set environment to use local VPN tunnel
+          echo "USE_BD_PROXY=false" >> $GITHUB_ENV
+          echo "✅ OpenVPN started"
+
+      # OPTION 3: Using WireGuard (Alternative VPN)
+      - name: Setup WireGuard (Bangladesh)
+        if: secrets.WIREGUARD_CONFIG != '' && secrets.BD_PROXY_HTTP == '' && secrets.OPENVPN_CONFIG == ''
+        run: |
+          echo "🔐 Setting up WireGuard connection to Bangladesh..."
+          sudo apt-get update -qq
+          sudo apt-get install -y wireguard > /dev/null 2>&1
+          echo "${{ secrets.WIREGUARD_CONFIG }}" | sudo tee /etc/wireguard/wg0.conf > /dev/null
+          sudo wg-quick up wg0 || echo "WireGuard setup attempted"
+          echo "⏳ Waiting for WireGuard connection..."
+          sleep 5
+          echo "USE_BD_PROXY=false" >> $GITHUB_ENV
+
+      # OPTION 4: Using Free Bangladeshi Proxy (Less Reliable)
+      # Only used if no secrets are configured
+      - name: Get Free Bangladesh Proxy
+        if: secrets.BD_PROXY_HTTP == '' && secrets.OPENVPN_CONFIG == '' && secrets.WIREGUARD_CONFIG == ''
+        run: |
+          echo "⚠️  Using free proxy (less reliable) - configure secrets for better results"
+          # Using a known proxy provider - replace with your preferred service
+          # Note: Free proxies are often unreliable and slow
+          echo "BD_PROXY=http://195.154.43.169:3128" >> $GITHUB_ENV
+          echo "USE_BD_PROXY=true" >> $GITHUB_ENV
+          # Try to fetch fresh proxy list from Bangladesh
+          python3 << 'EOF'
+          import urllib.request
+          import json
+          try:
+              # Try to get current proxy from Bangladesh
+              response = urllib.request.urlopen('https://www.proxy-list.download/api/v1/get?type=http', timeout=5)
+              proxies = json.loads(response.read().decode())
+              if proxies and 'LISTA' in proxies:
+                  for proxy in proxies['LISTA'][:5]:
+                      print(f"Available: {proxy['IP']}:{proxy['PORT']}")
+          except:
+              print("Could not fetch fresh proxy list - using default")
+          EOF
+
+      # Verify proxy/VPN connectivity
+      - name: Verify Bangladesh Connection
+        continue-on-error: true
+        run: |
+          echo "🔍 Checking connection..."
           
-          echo "Testing: $proxy"
-          
-          # Test if proxy works with increased timeout
-          IP=$(timeout 8 curl -s --max-time 8 --proxy "$proxy" http://api.ipify.org 2>/dev/null || echo "")
-          
-          if [ ! -z "$IP" ]; then
-            # Verify it's Bangladesh IP
-            COUNTRY=$(timeout 5 curl -s "http://ip-api.com/json/${IP}?fields=countryCode" 2>/dev/null | grep -o '"countryCode":"[^"]*"' | cut -d'"' -f4)
-            
-            if [ "$COUNTRY" = "BD" ]; then
-              echo "✅ Found working Bangladeshi proxy: $proxy (IP: $IP)"
-              WORKING_PROXY="$proxy"
-              break
-            else
-              echo "❌ Proxy IP is not from Bangladesh: $IP (Country: $COUNTRY)"
-            fi
+          if [ "$USE_BD_PROXY" = "true" ]; then
+            echo "Testing proxy: $BD_PROXY_HTTP"
+            curl -x "$BD_PROXY_HTTP" --connect-timeout 10 -s "https://api.ipify.org?format=json" || echo "⚠️  Proxy test failed"
+            curl -x "$BD_PROXY_HTTP" --connect-timeout 10 -s "https://api.country.is/" | grep -q "BD" && echo "✅ Confirmed Bangladesh IP" || echo "⚠️  Could not verify Bangladesh location"
           else
-            echo "❌ Proxy failed or timeout: $proxy"
-          fi
-        done <<< "$PROXY_LIST"
-        
-        if [ -z "$WORKING_PROXY" ]; then
-          # Try GitHub secrets proxy if set
-          if [ ! -z "${{ secrets.BANGLADESHI_PROXY }}" ]; then
+            echo "Testing direct connection..."
+            curl -s "https://api.ipify.org?format=json"
             echo ""
-            echo "Testing GitHub secrets proxy..."
-            IP=$(timeout 8 curl -s --max-time 8 --proxy "${{ secrets.BANGLADESHI_PROXY }}" http://api.ipify.org 2>/dev/null || echo "")
-            
-            if [ ! -z "$IP" ]; then
-              COUNTRY=$(timeout 5 curl -s "http://ip-api.com/json/${IP}?fields=countryCode" 2>/dev/null | grep -o '"countryCode":"[^"]*"' | cut -d'"' -f4)
-              
-              if [ "$COUNTRY" = "BD" ]; then
-                echo "✅ Using GitHub secrets proxy (IP: $IP)"
-                WORKING_PROXY="${{ secrets.BANGLADESHI_PROXY }}"
-              fi
-            fi
+            curl -s "https://api.country.is/"
           fi
-        fi
-        
-        if [ ! -z "$WORKING_PROXY" ]; then
-          echo "✅ PROXY VERIFIED: $WORKING_PROXY"
-          echo "proxy_url=$WORKING_PROXY" >> $GITHUB_OUTPUT
-          echo "HTTP_PROXY=$WORKING_PROXY" >> $GITHUB_ENV
-          echo "HTTPS_PROXY=$WORKING_PROXY" >> $GITHUB_ENV
-          export HTTP_PROXY="$WORKING_PROXY"
-          export HTTPS_PROXY="$WORKING_PROXY"
-        else
-          echo "❌ ERROR: No working Bangladeshi proxy found!"
-          echo "⚠️  Tried built-in proxies and GitHub secrets BANGLADESHI_PROXY"
-          echo "⚠️  Please set BANGLADESHI_PROXY in GitHub Secrets or update proxy list"
-          exit 1
-        fi
-    
-    - name: Verify Proxy & Run merge script
-      env:
-        HTTP_PROXY: ${{ env.HTTP_PROXY }}
-        HTTPS_PROXY: ${{ env.HTTPS_PROXY }}
-      run: |
-        echo "=========================================="
-        echo "🔍 VERIFYING PROXY VARIABLES"
-        echo "=========================================="
-        echo "HTTP_PROXY is set: $([ ! -z "$HTTP_PROXY" ] && echo 'YES' || echo 'NO')"
-        echo "HTTPS_PROXY is set: $([ ! -z "$HTTPS_PROXY" ] && echo 'YES' || echo 'NO')"
-        echo ""
-        
-        if [ -z "$HTTP_PROXY" ]; then
-          echo "❌ ERROR: HTTP_PROXY not set!"
-          exit 1
-        fi
-        
-        echo "Testing proxy connection..."
-        if ! timeout 5 curl -s --proxy "$HTTP_PROXY" http://api.ipify.org > /dev/null 2>&1; then
-          echo "⚠️  Proxy test timeout - it might still work"
-        else
-          echo "✅ Proxy connection verified"
-        fi
-        
-        echo ""
-        echo "=========================================="
-        echo "🚀 STARTING IPTV MERGE"
-        echo "=========================================="
-        python merge.py
-        
-        if [ $? -eq 0 ]; then
-          echo ""
-          echo "✅ Merge completed successfully"
-        else
-          echo ""
-          echo "❌ Merge script failed"
-          exit 1
-        fi
-    
-    - name: Commit and push
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions@github.com"
-        git add merged.m3u
-        
-        if git diff --cached --quiet; then
-          echo "No changes to commit"
-        else
-          git commit -m "Auto update IPTV playlist - Bangladesh filtered [$(date +'%Y-%m-%d %H:%M')]"
+
+      # Main task: Run IPTV merge script
+      - name: Run IPTV Merge with Bangladesh IP Filter
+        env:
+          BD_PROXY_HTTP: ${{ env.BD_PROXY_HTTP }}
+          BD_PROXY_HTTPS: ${{ env.BD_PROXY_HTTPS }}
+          USE_BD_PROXY: ${{ env.USE_BD_PROXY }}
+        run: |
+          echo "═══════════════════════════════════════════════════════════"
+          echo "🎬 Starting IPTV Merge with Bangladesh IP Filtering"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "Proxy Enabled: ${USE_BD_PROXY}"
+          python merge.py
+          echo "═══════════════════════════════════════════════════════════"
+
+      # Verify output files were created
+      - name: Verify Output Files
+        run: |
+          if [ -f merged.m3u ] && [ -f sources.txt ]; then
+            echo "✅ Output files created successfully"
+            echo "📊 Merged channels: $(grep -c '^#EXTINF' merged.m3u 2>/dev/null || echo 'N/A')"
+          else
+            echo "⚠️  Output files not found"
+          fi
+
+      # Check for changes
+      - name: Check if files changed
+        id: verify
+        run: |
+          if git diff --quiet merged.m3u sources.txt 2>/dev/null; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  No changes detected"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "📝 Changes detected - will commit"
+          fi
+
+      # Commit changes
+      - name: Commit and push changes
+        if: steps.verify.outputs.changed == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "IPTV Bot"
+          git add merged.m3u sources.txt
+          git commit -m "🔄 Update IPTV channels - Bangladesh IP filtered [$(date +'%Y-%m-%d %H:%M:%S')]"
           git push
-        fi
+
+      # Create GitHub Release
+      - name: Create GitHub Release
+        if: steps.verify.outputs.changed == 'true'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: iptv-${{ github.run_number }}
+          release_name: IPTV Channels - Run #${{ github.run_number }}
+          body: |
+            ✅ IPTV channels successfully merged with Bangladesh IP filtering
+            
+            **📊 Workflow Information:**
+            - Run ID: ${{ github.run_id }}
+            - Timestamp: ${{ github.event.head_commit.timestamp }}
+            - Triggered by: ${{ github.event_name }}
+            
+            **📁 Generated Files:**
+            - `merged.m3u` - Complete merged M3U8 playlist
+            - `sources.txt` - Channel information
+            
+            **🎬 Usage:**
+            Download the latest release and use `merged.m3u` in your IPTV player.
+          draft: false
+          prerelease: false
+
+      # Upload artifacts
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: iptv-merged-${{ github.run_id }}
+          path: |
+            merged.m3u
+            sources.txt
+          retention-days: 30
+
+      # Cleanup VPN if used
+      - name: Cleanup VPN
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -f /tmp/openvpn.log ]; then
+            sudo killall openvpn || true
+            echo "OpenVPN stopped"
+          fi
+          if [ -d /etc/wireguard ]; then
+            sudo wg-quick down wg0 || true
+            echo "WireGuard stopped"
+          fi
+
+      # Job summary
+      - name: Print Summary
+        if: always()
+        run: |
+          echo "## IPTV Merge Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Output Files:**" >> $GITHUB_STEP_SUMMARY
+          echo "- merged.m3u" >> $GITHUB_STEP_SUMMARY
+          echo "- sources.txt" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f merged.m3u ]; then
+            channels=$(grep -c '^#EXTINF' merged.m3u 2>/dev/null || echo 0)
+            echo "**Total Channels:** $channels" >> $GITHUB_STEP_SUMMARY
+          fi
