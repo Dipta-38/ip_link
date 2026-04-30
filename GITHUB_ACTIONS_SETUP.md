@@ -28,7 +28,7 @@ The workflow will automatically:
 
 ## Detailed Workflow Explanation
 
-### How the Workflow Works
+## Detailed Workflow Explanation
 
 The updated `.github/workflows/merge.yml` does this:
 
@@ -40,23 +40,34 @@ The updated `.github/workflows/merge.yml` does this:
 3. Install requests package
    ↓
 4. Test Bangladeshi Proxies:
-   - Try built-in proxy list (4 free proxies)
+   - Try built-in proxy list (18 fresh proxies)
    - If none work, try GitHub secret BANGLADESHI_PROXY
    - Verify each proxy returns Bangladesh IP
    ↓
 5. If proxy found and verified:
-   - Set HTTP_PROXY and HTTPS_PROXY
-   - Run merge.py
-   - Script filters channels by Bangladesh availability
+   - Export HTTP_PROXY and HTTPS_PROXY env vars
+   - Verify env vars are set (FIXED!)
+   - Test proxy connection
    ↓
-6. If successful:
+6. Run merge.py:
+   - Script receives proxy via environment
+   - Verifies Bangladesh IP again
+   - Filters channels by Bangladesh availability
+   ↓
+7. If successful:
    - Commit merged.m3u
    - Push to repository
    ↓
-7. If failed:
-   - Show error message
+8. If failed:
+   - Show detailed error message
    - Don't update repository
 ```
+
+### Important: Proxy Fix Applied ⚠️
+
+**The workflow has been fixed** to properly pass proxy variables to merge.py.
+
+**If you're seeing "proxy failed error":** → See [GITHUB_ACTIONS_PROXY_FIX.md](GITHUB_ACTIONS_PROXY_FIX.md)
 
 ### What Each Step Does
 

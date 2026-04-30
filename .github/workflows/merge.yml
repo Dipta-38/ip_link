@@ -26,6 +26,7 @@ jobs:
       run: pip install requests
     
     - name: Configure Bangladeshi Proxy
+      id: proxy
       env:
         PROXY_LIST: |
           http://103.106.233.226:80
@@ -56,8 +57,8 @@ jobs:
           
           echo "Testing: $proxy"
           
-          # Test if proxy works
-          IP=$(timeout 5 curl -s --max-time 5 --proxy "$proxy" http://api.ipify.org 2>/dev/null || echo "")
+          # Test if proxy works with increased timeout
+          IP=$(timeout 8 curl -s --max-time 8 --proxy "$proxy" http://api.ipify.org 2>/dev/null || echo "")
           
           if [ ! -z "$IP" ]; then
             # Verify it's Bangladesh IP
@@ -78,8 +79,9 @@ jobs:
         if [ -z "$WORKING_PROXY" ]; then
           # Try GitHub secrets proxy if set
           if [ ! -z "${{ secrets.BANGLADESHI_PROXY }}" ]; then
+            echo ""
             echo "Testing GitHub secrets proxy..."
-            IP=$(timeout 5 curl -s --max-time 5 --proxy "${{ secrets.BANGLADESHI_PROXY }}" http://api.ipify.org 2>/dev/null || echo "")
+            IP=$(timeout 8 curl -s --max-time 8 --proxy "${{ secrets.BANGLADESHI_PROXY }}" http://api.ipify.org 2>/dev/null || echo "")
             
             if [ ! -z "$IP" ]; then
               COUNTRY=$(timeout 5 curl -s "http://ip-api.com/json/${IP}?fields=countryCode" 2>/dev/null | grep -o '"countryCode":"[^"]*"' | cut -d'"' -f4)
@@ -93,26 +95,54 @@ jobs:
         fi
         
         if [ ! -z "$WORKING_PROXY" ]; then
+          echo "✅ PROXY VERIFIED: $WORKING_PROXY"
+          echo "proxy_url=$WORKING_PROXY" >> $GITHUB_OUTPUT
           echo "HTTP_PROXY=$WORKING_PROXY" >> $GITHUB_ENV
           echo "HTTPS_PROXY=$WORKING_PROXY" >> $GITHUB_ENV
-          echo "PROXY_ACTIVE=true" >> $GITHUB_ENV
+          export HTTP_PROXY="$WORKING_PROXY"
+          export HTTPS_PROXY="$WORKING_PROXY"
         else
           echo "❌ ERROR: No working Bangladeshi proxy found!"
-          echo "⚠️  Please set BANGLADESHI_PROXY in GitHub Secrets"
+          echo "⚠️  Tried built-in proxies and GitHub secrets BANGLADESHI_PROXY"
+          echo "⚠️  Please set BANGLADESHI_PROXY in GitHub Secrets or update proxy list"
           exit 1
         fi
     
-    - name: Run merge script
+    - name: Verify Proxy & Run merge script
       env:
         HTTP_PROXY: ${{ env.HTTP_PROXY }}
         HTTPS_PROXY: ${{ env.HTTPS_PROXY }}
       run: |
-        echo "🚀 Starting IPTV merge with Bangladeshi IP filter..."
+        echo "=========================================="
+        echo "🔍 VERIFYING PROXY VARIABLES"
+        echo "=========================================="
+        echo "HTTP_PROXY is set: $([ ! -z "$HTTP_PROXY" ] && echo 'YES' || echo 'NO')"
+        echo "HTTPS_PROXY is set: $([ ! -z "$HTTPS_PROXY" ] && echo 'YES' || echo 'NO')"
+        echo ""
+        
+        if [ -z "$HTTP_PROXY" ]; then
+          echo "❌ ERROR: HTTP_PROXY not set!"
+          exit 1
+        fi
+        
+        echo "Testing proxy connection..."
+        if ! timeout 5 curl -s --proxy "$HTTP_PROXY" http://api.ipify.org > /dev/null 2>&1; then
+          echo "⚠️  Proxy test timeout - it might still work"
+        else
+          echo "✅ Proxy connection verified"
+        fi
+        
+        echo ""
+        echo "=========================================="
+        echo "🚀 STARTING IPTV MERGE"
+        echo "=========================================="
         python merge.py
         
         if [ $? -eq 0 ]; then
+          echo ""
           echo "✅ Merge completed successfully"
         else
+          echo ""
           echo "❌ Merge script failed"
           exit 1
         fi
