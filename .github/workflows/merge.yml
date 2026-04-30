@@ -30,103 +30,99 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests pysocks urllib3
 
-      # ===========================================================================
-      # CHOOSE ONE OF THE FOLLOWING BD PROXY/VPN SETUP OPTIONS
-      # ===========================================================================
-
-      # OPTION 1: Using GitHub Secrets (RECOMMENDED - Most Reliable)
-      # Configure in GitHub: Settings → Secrets and variables → Actions
-      # Add: BD_PROXY_HTTP and BD_PROXY_HTTPS secrets
-      - name: Setup Bangladesh Proxy from Secrets
-        if: ${{ secrets.BD_PROXY_HTTP != '' }}
+      # Configure Bangladesh proxy/VPN access
+      - name: Setup Bangladesh IP Access
+        env:
+          BD_PROXY_HTTP: ${{ secrets.BD_PROXY_HTTP }}
+          BD_PROXY_HTTPS: ${{ secrets.BD_PROXY_HTTPS }}
+          OPENVPN_CONFIG: ${{ secrets.OPENVPN_CONFIG }}
+          WIREGUARD_CONFIG: ${{ secrets.WIREGUARD_CONFIG }}
         run: |
-          echo "✅ Using Bangladesh proxy from GitHub Secrets"
-          echo "BD_PROXY_HTTP=${{ secrets.BD_PROXY_HTTP }}" >> $GITHUB_ENV
-          echo "BD_PROXY_HTTPS=${{ secrets.BD_PROXY_HTTPS }}" >> $GITHUB_ENV
-          echo "USE_BD_PROXY=true" >> $GITHUB_ENV
+          echo "═══════════════════════════════════════════════════════════"
+          echo "🔧 Configuring Bangladesh IP Access"
+          echo "═══════════════════════════════════════════════════════════"
+          
+          # Check which proxy/VPN option is configured
+          if [ -n "$BD_PROXY_HTTP" ]; then
+            echo "✅ Using HTTP Proxy from secrets"
+            echo "BD_PROXY_HTTP=$BD_PROXY_HTTP" >> $GITHUB_ENV
+            echo "BD_PROXY_HTTPS=$BD_PROXY_HTTPS" >> $GITHUB_ENV
+            echo "USE_BD_PROXY=true" >> $GITHUB_ENV
+          
+          elif [ -n "$OPENVPN_CONFIG" ]; then
+            echo "🔐 Setting up OpenVPN connection..."
+            sudo apt-get update -qq > /dev/null 2>&1
+            sudo apt-get install -y openvpn > /dev/null 2>&1
+            
+            # Decode and write OpenVPN config
+            echo "$OPENVPN_CONFIG" | base64 -d > /tmp/bd-vpn.ovpn
+            
+            # Start OpenVPN
+            sudo openvpn --config /tmp/bd-vpn.ovpn --log /tmp/openvpn.log --daemon
+            echo "⏳ Waiting for VPN connection..."
+            sleep 15
+            
+            # Check if VPN connected
+            if sudo ip route | grep -q "tun0\|tap0"; then
+              echo "✅ OpenVPN connected successfully"
+              echo "USE_BD_PROXY=false" >> $GITHUB_ENV
+            else
+              echo "⚠️  OpenVPN might not be fully connected, but continuing..."
+              echo "USE_BD_PROXY=false" >> $GITHUB_ENV
+            fi
+          
+          elif [ -n "$WIREGUARD_CONFIG" ]; then
+            echo "🔐 Setting up WireGuard connection..."
+            sudo apt-get update -qq > /dev/null 2>&1
+            sudo apt-get install -y wireguard > /dev/null 2>&1
+            
+            # Decode and write WireGuard config
+            echo "$WIREGUARD_CONFIG" | base64 -d | sudo tee /etc/wireguard/wg0.conf > /dev/null
+            
+            # Start WireGuard
+            sudo wg-quick up wg0 || true
+            echo "⏳ Waiting for WireGuard connection..."
+            sleep 5
+            
+            if sudo ip link show wg0 > /dev/null 2>&1; then
+              echo "✅ WireGuard connected successfully"
+            else
+              echo "⚠️  WireGuard setup attempted but may not be fully connected"
+            fi
+            echo "USE_BD_PROXY=false" >> $GITHUB_ENV
+          
+          else
+            echo "⚠️  No proxy/VPN configured - using default connection"
+            echo "   To use Bangladesh IP, add secrets:"
+            echo "   - BD_PROXY_HTTP and BD_PROXY_HTTPS for HTTP proxy"
+            echo "   - OPENVPN_CONFIG for OpenVPN (base64 encoded .ovpn)"
+            echo "   - WIREGUARD_CONFIG for WireGuard (base64 encoded config)"
+            echo "USE_BD_PROXY=false" >> $GITHUB_ENV
+          fi
 
-      # OPTION 2: Using OpenVPN with Bangladesh Server
-      # Store OpenVPN config in secrets.OPENVPN_CONFIG
-      - name: Setup OpenVPN (Bangladesh)
-        if: ${{ secrets.OPENVPN_CONFIG != '' && secrets.BD_PROXY_HTTP == '' }}
-        run: |
-          echo "🔐 Setting up OpenVPN connection to Bangladesh..."
-          sudo apt-get update -qq
-          sudo apt-get install -y openvpn > /dev/null 2>&1
-          echo "${{ secrets.OPENVPN_CONFIG }}" > /tmp/bd-vpn.ovpn
-          sudo openvpn --config /tmp/bd-vpn.ovpn --log /tmp/openvpn.log --daemon
-          echo "⏳ Waiting for VPN connection..."
-          sleep 10
-          # Set environment to use local VPN tunnel
-          echo "USE_BD_PROXY=false" >> $GITHUB_ENV
-          echo "✅ OpenVPN started"
-
-      # OPTION 3: Using WireGuard (Alternative VPN)
-      - name: Setup WireGuard (Bangladesh)
-        if: ${{ secrets.WIREGUARD_CONFIG != '' && secrets.BD_PROXY_HTTP == '' && secrets.OPENVPN_CONFIG == '' }}
-        run: |
-          echo "🔐 Setting up WireGuard connection to Bangladesh..."
-          sudo apt-get update -qq
-          sudo apt-get install -y wireguard > /dev/null 2>&1
-          echo "${{ secrets.WIREGUARD_CONFIG }}" | sudo tee /etc/wireguard/wg0.conf > /dev/null
-          sudo wg-quick up wg0 || echo "WireGuard setup attempted"
-          echo "⏳ Waiting for WireGuard connection..."
-          sleep 5
-          echo "USE_BD_PROXY=false" >> $GITHUB_ENV
-
-      # OPTION 4: Using Free Bangladeshi Proxy (Less Reliable)
-      # Only used if no secrets are configured
-      - name: Get Free Bangladesh Proxy
-        if: ${{ secrets.BD_PROXY_HTTP == '' && secrets.OPENVPN_CONFIG == '' && secrets.WIREGUARD_CONFIG == '' }}
-        run: |
-          echo "⚠️  Using free proxy (less reliable) - configure secrets for better results"
-          # Using a known proxy provider - replace with your preferred service
-          # Note: Free proxies are often unreliable and slow
-          echo "BD_PROXY=http://195.154.43.169:3128" >> $GITHUB_ENV
-          echo "USE_BD_PROXY=true" >> $GITHUB_ENV
-          # Try to fetch fresh proxy list from Bangladesh
-          python3 << 'EOF'
-          import urllib.request
-          import json
-          try:
-              # Try to get current proxy from Bangladesh
-              response = urllib.request.urlopen('https://www.proxy-list.download/api/v1/get?type=http', timeout=5)
-              proxies = json.loads(response.read().decode())
-              if proxies and 'LISTA' in proxies:
-                  for proxy in proxies['LISTA'][:5]:
-                      print(f"Available: {proxy['IP']}:{proxy['PORT']}")
-          except:
-              print("Could not fetch fresh proxy list - using default")
-          EOF
-
-      # Verify proxy/VPN connectivity
+      # Test connectivity to verify Bangladesh IP
       - name: Verify Bangladesh Connection
         continue-on-error: true
         run: |
           echo "🔍 Checking connection..."
           
-          if [ "$USE_BD_PROXY" = "true" ]; then
-            echo "Testing proxy: $BD_PROXY_HTTP"
-            curl -x "$BD_PROXY_HTTP" --connect-timeout 10 -s "https://api.ipify.org?format=json" || echo "⚠️  Proxy test failed"
-            curl -x "$BD_PROXY_HTTP" --connect-timeout 10 -s "https://api.country.is/" | grep -q "BD" && echo "✅ Confirmed Bangladesh IP" || echo "⚠️  Could not verify Bangladesh location"
+          if [ "${{ env.USE_BD_PROXY }}" = "true" ]; then
+            echo "Testing proxy: ${{ env.BD_PROXY_HTTP }}"
+            curl -x "${{ env.BD_PROXY_HTTP }}" --connect-timeout 10 -s "https://api.ipify.org?format=json" || echo "⚠️  Proxy test failed"
+            curl -x "${{ env.BD_PROXY_HTTP }}" --connect-timeout 10 -s "https://api.country.is/" | grep -q '"country":"BD"' && echo "✅ Confirmed Bangladesh IP" || echo "⚠️  Could not verify Bangladesh location"
           else
             echo "Testing direct connection..."
-            curl -s "https://api.ipify.org?format=json"
-            echo ""
-            curl -s "https://api.country.is/"
+            curl -s --connect-timeout 10 "https://api.ipify.org?format=json" || echo "Could not reach IP service"
+            curl -s --connect-timeout 10 "https://api.country.is/" | grep -q '"country":"BD"' && echo "✅ Using Bangladesh IP" || echo "⚠️  Not using Bangladesh IP"
           fi
 
       # Main task: Run IPTV merge script
       - name: Run IPTV Merge with Bangladesh IP Filter
-        env:
-          BD_PROXY_HTTP: ${{ env.BD_PROXY_HTTP }}
-          BD_PROXY_HTTPS: ${{ env.BD_PROXY_HTTPS }}
-          USE_BD_PROXY: ${{ env.USE_BD_PROXY }}
         run: |
           echo "═══════════════════════════════════════════════════════════"
           echo "🎬 Starting IPTV Merge with Bangladesh IP Filtering"
           echo "═══════════════════════════════════════════════════════════"
-          echo "Proxy Enabled: ${USE_BD_PROXY}"
+          echo "Proxy Enabled: ${{ env.USE_BD_PROXY }}"
           python merge.py
           echo "═══════════════════════════════════════════════════════════"
 
@@ -135,9 +131,11 @@ jobs:
         run: |
           if [ -f merged.m3u ] && [ -f sources.txt ]; then
             echo "✅ Output files created successfully"
-            echo "📊 Merged channels: $(grep -c '^#EXTINF' merged.m3u 2>/dev/null || echo 'N/A')"
+            channels=$(grep -c '^#EXTINF' merged.m3u 2>/dev/null || echo 0)
+            echo "📊 Merged channels: $channels"
           else
             echo "⚠️  Output files not found"
+            ls -la *.m3u* 2>/dev/null || echo "No M3U files found"
           fi
 
       # Check for changes
@@ -150,33 +148,36 @@ jobs:
           else
             echo "changed=true" >> $GITHUB_OUTPUT
             echo "📝 Changes detected - will commit"
+            git diff --stat merged.m3u sources.txt || true
           fi
+
+      # Configure Git
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "IPTV Bot"
 
       # Commit changes
       - name: Commit and push changes
         if: steps.verify.outputs.changed == 'true'
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "IPTV Bot"
           git add merged.m3u sources.txt
           git commit -m "🔄 Update IPTV channels - Bangladesh IP filtered [$(date +'%Y-%m-%d %H:%M:%S')]"
-          git push
+          git push || echo "⚠️  Push failed, but workflow continues"
 
       # Create GitHub Release
       - name: Create GitHub Release
         if: steps.verify.outputs.changed == 'true'
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: iptv-${{ github.run_number }}
-          release_name: IPTV Channels - Run #${{ github.run_number }}
+          tag: iptv-${{ github.run_number }}
+          name: IPTV Channels - Run #${{ github.run_number }}
           body: |
             ✅ IPTV channels successfully merged with Bangladesh IP filtering
             
             **📊 Workflow Information:**
             - Run ID: ${{ github.run_id }}
-            - Timestamp: ${{ github.event.head_commit.timestamp }}
+            - Repository: ${{ github.repository }}
             - Triggered by: ${{ github.event_name }}
             
             **📁 Generated Files:**
@@ -184,7 +185,7 @@ jobs:
             - `sources.txt` - Channel information
             
             **🎬 Usage:**
-            Download the latest release and use `merged.m3u` in your IPTV player.
+            Download `merged.m3u` and use in your IPTV player.
           draft: false
           prerelease: false
 
@@ -205,12 +206,14 @@ jobs:
         continue-on-error: true
         run: |
           if [ -f /tmp/openvpn.log ]; then
-            sudo killall openvpn || true
-            echo "OpenVPN stopped"
+            echo "Stopping OpenVPN..."
+            sudo killall openvpn 2>/dev/null || true
+            echo "✅ OpenVPN stopped"
           fi
-          if [ -d /etc/wireguard ]; then
-            sudo wg-quick down wg0 || true
-            echo "WireGuard stopped"
+          if sudo ip link show wg0 > /dev/null 2>&1; then
+            echo "Stopping WireGuard..."
+            sudo wg-quick down wg0 2>/dev/null || true
+            echo "✅ WireGuard stopped"
           fi
 
       # Job summary
@@ -220,12 +223,14 @@ jobs:
           echo "## IPTV Merge Workflow Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Output Files:**" >> $GITHUB_STEP_SUMMARY
-          echo "- merged.m3u" >> $GITHUB_STEP_SUMMARY
-          echo "- sources.txt" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           if [ -f merged.m3u ]; then
             channels=$(grep -c '^#EXTINF' merged.m3u 2>/dev/null || echo 0)
-            echo "**Total Channels:** $channels" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ merged.m3u ($channels channels)" >> $GITHUB_STEP_SUMMARY
           fi
+          if [ -f sources.txt ]; then
+            echo "- ✅ sources.txt" >> $GITHUB_STEP_SUMMARY
+          fi
+
