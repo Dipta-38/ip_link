@@ -1,186 +1,178 @@
 #!/usr/bin/env python3
 """
-IPTV Playlist Merger and IP Filter
-Merges multiple IPTV playlists and filters channels by IP address.
+IPTV M3U Merger Script
+Fetches and merges multiple M3U/M3U8 playlists from sources.txt
 """
 
 import requests
-import re
+import os
+import sys
 from pathlib import Path
-from urllib.parse import urlparse
-import yaml
-from datetime import datetime
+from typing import Set, List, Tuple
+import logging
 
-class IPTVMerger:
-    def __init__(self, config_file='merge.yml'):
-        """Initialize with configuration file."""
-        self.config = self.load_config(config_file)
-        self.target_ip = self.config.get('target_ip', '103.73.185.62')
-        self.sources_file = self.config.get('sources_file', 'sources.txt')
-        self.output_file = self.config.get('output_file', 'merged.m3u')
-        self.timeout = self.config.get('timeout', 10)
-        self.merged_channels = []
-        
-    def load_config(self, config_file):
-        """Load configuration from YAML file."""
-        try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f) or {}
-        except FileNotFoundError:
-            print(f"Config file {config_file} not found. Using defaults.")
-            return {}
-        
-    def load_sources(self):
-        """Load source URLs from sources.txt."""
-        sources = []
-        try:
-            with open(self.sources_file, 'r', encoding='utf-8') as f:
-                sources = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-        except FileNotFoundError:
-            print(f"Sources file {self.sources_file} not found.")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Configuration
+SCRIPT_DIR = Path(__file__).parent
+SOURCES_FILE = SCRIPT_DIR / "sources.txt"
+OUTPUT_FILE = SCRIPT_DIR / "merged.m3u"
+TIMEOUT = 30  # seconds
+MAX_RETRIES = 3
+
+def read_sources(sources_file: Path) -> List[str]:
+    """Read URLs from sources.txt file."""
+    try:
+        with open(sources_file, 'r', encoding='utf-8') as f:
+            sources = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        logger.info(f"Found {len(sources)} sources in {sources_file}")
         return sources
-    
-    def download_playlist(self, url):
-        """Download a playlist from URL."""
-        try:
-            print(f"Downloading: {url}")
-            response = requests.get(url, timeout=self.timeout)
-            response.raise_for_status()
-            return response.text
-        except requests.RequestException as e:
-            print(f"Error downloading {url}: {e}")
-            return ""
-    
-    def is_channel_compatible(self, url):
-        """Check if channel URL is compatible with target IP."""
-        # Check if URL contains the target IP
-        if self.target_ip in url:
-            return True
-        
-        # Check for common BDIX/IPTV patterns that work with the IP
-        bdix_patterns = [
-            r'103\.\d+\.\d+\.\d+',  # Any IP in 103.x.x.x range (BDIX)
-            r'192\.168\.',           # Local network
-            r'10\.\d+\.',            # Private network
-        ]
-        
-        for pattern in bdix_patterns:
-            if re.search(pattern, url):
-                return True
-        
-        # Check for relative URLs or stream paths
-        parsed = urlparse(url)
-        if not parsed.netloc or parsed.netloc.startswith('localhost'):
-            return True
-        
-        return False
-    
-    def parse_m3u(self, content):
-        """Parse M3U playlist content."""
-        channels = []
-        lines = content.split('\n')
-        i = 0
-        
-        while i < len(lines):
-            line = lines[i].strip()
-            
-            # Look for EXTINF lines
-            if line.startswith('#EXTINF:'):
-                extinf = line
-                # Next line should be the URL
-                if i + 1 < len(lines):
-                    url = lines[i + 1].strip()
-                    if url and not url.startswith('#'):
-                        channels.append({
-                            'extinf': extinf,
-                            'url': url
-                        })
-                    i += 2
-                else:
-                    i += 1
-            else:
-                i += 1
-        
-        return channels
-    
-    def filter_channels(self, channels):
-        """Filter channels by IP compatibility."""
-        filtered = []
-        for channel in channels:
-            if self.is_channel_compatible(channel['url']):
-                filtered.append(channel)
-        return filtered
-    
-    def merge_playlists(self):
-        """Merge and filter playlists."""
-        sources = self.load_sources()
-        
-        if not sources:
-            print("No sources found!")
-            return
-        
-        print(f"\n{'='*60}")
-        print(f"IPTV Playlist Merger - Filtering for IP: {self.target_ip}")
-        print(f"{'='*60}\n")
-        
-        all_channels = []
-        unique_urls = set()
-        
-        for source_url in sources:
-            content = self.download_playlist(source_url)
-            if content:
-                channels = self.parse_m3u(content)
-                # Filter channels by IP
-                filtered = self.filter_channels(channels)
-                
-                # Avoid duplicates
-                for channel in filtered:
-                    if channel['url'] not in unique_urls:
-                        all_channels.append(channel)
-                        unique_urls.add(channel['url'])
-                
-                print(f"✓ Found {len(filtered)} compatible channels from {len(channels)} total")
-        
-        print(f"\n{'='*60}")
-        print(f"Total unique channels: {len(all_channels)}")
-        print(f"{'='*60}\n")
-        
-        self.merged_channels = all_channels
-        return all_channels
-    
-    def save_playlist(self):
-        """Save merged playlist to M3U file."""
-        if not self.merged_channels:
-            print("No channels to save!")
-            return
-        
-        try:
-            with open(self.output_file, 'w', encoding='utf-8') as f:
-                f.write("#EXTM3U\n")
-                f.write(f"#EXTM3U url-tvg=\"\" refresh=\"3600\" max-conn=\"1\"\n")
-                f.write(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"# Filtered for IP: {self.target_ip}\n")
-                f.write(f"# Total channels: {len(self.merged_channels)}\n\n")
-                
-                for channel in self.merged_channels:
-                    f.write(channel['extinf'] + '\n')
-                    f.write(channel['url'] + '\n')
-            
-            print(f"✓ Playlist saved to: {self.output_file}")
-            print(f"  Total channels: {len(self.merged_channels)}")
-        except IOError as e:
-            print(f"Error saving playlist: {e}")
-    
-    def run(self):
-        """Run the complete merge and filter process."""
-        self.merge_playlists()
-        self.save_playlist()
+    except FileNotFoundError:
+        logger.error(f"Sources file not found: {sources_file}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error reading sources file: {e}")
+        sys.exit(1)
 
+def fetch_playlist(url: str, retries: int = MAX_RETRIES) -> Tuple[bool, str]:
+    """
+    Fetch a single playlist from URL with retry logic.
+    Returns tuple (success: bool, content: str)
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+    
+    for attempt in range(retries):
+        try:
+            logger.debug(f"Fetching {url} (attempt {attempt + 1}/{retries})")
+            response = requests.get(url, timeout=TIMEOUT, headers=headers)
+            response.raise_for_status()
+            return True, response.text
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout fetching {url} (attempt {attempt + 1}/{retries})")
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"Connection error fetching {url} (attempt {attempt + 1}/{retries})")
+        except requests.exceptions.HTTPError as e:
+            logger.warning(f"HTTP error {e.response.status_code} for {url}")
+            return False, ""
+        except Exception as e:
+            logger.warning(f"Error fetching {url}: {e} (attempt {attempt + 1}/{retries})")
+    
+    logger.error(f"Failed to fetch {url} after {retries} attempts")
+    return False, ""
+
+def parse_m3u_content(content: str) -> Tuple[List[str], List[str]]:
+    """
+    Parse M3U content and extract channels.
+    Returns tuple (extinf_lines: List[str], url_lines: List[str])
+    """
+    lines = content.split('\n')
+    extinf_lines = []
+    url_lines = []
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        if line.startswith('#EXTINF:'):
+            extinf_lines.append(line)
+            # Next non-empty line should be the URL
+            i += 1
+            while i < len(lines):
+                url_line = lines[i].strip()
+                if url_line and not url_line.startswith('#'):
+                    url_lines.append(url_line)
+                    break
+                i += 1
+        i += 1
+    
+    return extinf_lines, url_lines
+
+def merge_playlists(sources: List[str]) -> Tuple[List[str], List[str]]:
+    """
+    Fetch and merge all playlists from sources.
+    Returns tuple (unique_extinf_lines, unique_url_lines)
+    """
+    all_extinf = []
+    all_urls = []
+    seen_urls: Set[str] = set()
+    
+    logger.info("Starting playlist merge process...")
+    
+    for source_url in sources:
+        logger.info(f"Processing: {source_url}")
+        success, content = fetch_playlist(source_url)
+        
+        if not success or not content:
+            logger.warning(f"Skipped: {source_url}")
+            continue
+        
+        extinf_lines, url_lines = parse_m3u_content(content)
+        logger.info(f"  Found {len(url_lines)} channels in this source")
+        
+        # Add unique channels
+        for extinf, url in zip(extinf_lines, url_lines):
+            if url not in seen_urls:
+                seen_urls.add(url)
+                all_extinf.append(extinf)
+                all_urls.append(url)
+    
+    logger.info(f"Total unique channels merged: {len(all_urls)}")
+    return all_extinf, all_urls
+
+def save_merged_playlist(extinf_lines: List[str], url_lines: List[str], output_file: Path):
+    """Save merged playlist to output file."""
+    try:
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write("#EXTM3U\n")
+            
+            for extinf, url in zip(extinf_lines, url_lines):
+                f.write(extinf + "\n")
+                f.write(url + "\n")
+        
+        logger.info(f"Merged playlist saved to: {output_file}")
+        logger.info(f"Total channels: {len(url_lines)}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving merged playlist: {e}")
+        return False
 
 def main():
-    merger = IPTVMerger()
-    merger.run()
+    """Main function."""
+    try:
+        # Read sources
+        sources = read_sources(SOURCES_FILE)
+        
+        if not sources:
+            logger.warning("No sources found in sources.txt")
+            sys.exit(1)
+        
+        # Merge playlists
+        extinf_lines, url_lines = merge_playlists(sources)
+        
+        if not url_lines:
+            logger.error("No channels were merged successfully")
+            sys.exit(1)
+        
+        # Save merged playlist
+        success = save_merged_playlist(extinf_lines, url_lines, OUTPUT_FILE)
+        
+        if success:
+            logger.info("Merge completed successfully!")
+            sys.exit(0)
+        else:
+            logger.error("Failed to save merged playlist")
+            sys.exit(1)
+    
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        sys.exit(1)
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
