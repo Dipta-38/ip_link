@@ -38,7 +38,7 @@ jobs:
       # Configure in GitHub: Settings → Secrets and variables → Actions
       # Add: BD_PROXY_HTTP and BD_PROXY_HTTPS secrets
       - name: Setup Bangladesh Proxy from Secrets
-        if: secrets.BD_PROXY_HTTP != ''
+        if: ${{ secrets.BD_PROXY_HTTP != '' }}
         run: |
           echo "✅ Using Bangladesh proxy from GitHub Secrets"
           echo "BD_PROXY_HTTP=${{ secrets.BD_PROXY_HTTP }}" >> $GITHUB_ENV
@@ -48,7 +48,7 @@ jobs:
       # OPTION 2: Using OpenVPN with Bangladesh Server
       # Store OpenVPN config in secrets.OPENVPN_CONFIG
       - name: Setup OpenVPN (Bangladesh)
-        if: secrets.OPENVPN_CONFIG != '' && secrets.BD_PROXY_HTTP == ''
+        if: ${{ secrets.OPENVPN_CONFIG != '' && secrets.BD_PROXY_HTTP == '' }}
         run: |
           echo "🔐 Setting up OpenVPN connection to Bangladesh..."
           sudo apt-get update -qq
@@ -63,7 +63,7 @@ jobs:
 
       # OPTION 3: Using WireGuard (Alternative VPN)
       - name: Setup WireGuard (Bangladesh)
-        if: secrets.WIREGUARD_CONFIG != '' && secrets.BD_PROXY_HTTP == '' && secrets.OPENVPN_CONFIG == ''
+        if: ${{ secrets.WIREGUARD_CONFIG != '' && secrets.BD_PROXY_HTTP == '' && secrets.OPENVPN_CONFIG == '' }}
         run: |
           echo "🔐 Setting up WireGuard connection to Bangladesh..."
           sudo apt-get update -qq
@@ -77,7 +77,7 @@ jobs:
       # OPTION 4: Using Free Bangladeshi Proxy (Less Reliable)
       # Only used if no secrets are configured
       - name: Get Free Bangladesh Proxy
-        if: secrets.BD_PROXY_HTTP == '' && secrets.OPENVPN_CONFIG == '' && secrets.WIREGUARD_CONFIG == ''
+        if: ${{ secrets.BD_PROXY_HTTP == '' && secrets.OPENVPN_CONFIG == '' && secrets.WIREGUARD_CONFIG == '' }}
         run: |
           echo "⚠️  Using free proxy (less reliable) - configure secrets for better results"
           # Using a known proxy provider - replace with your preferred service
