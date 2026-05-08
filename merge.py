@@ -2,11 +2,13 @@
 """
 IPTV M3U Merger Script
 Fetches and merges multiple M3U/M3U8 playlists from sources.txt
+Filters out unwanted channels (Live BDIX, Welcome to PlayZ)
 """
 
 import requests
 import os
 import sys
+import re
 from pathlib import Path
 from typing import Set, List, Tuple
 import logging
@@ -24,6 +26,27 @@ SOURCES_FILE = SCRIPT_DIR / "sources.txt"
 OUTPUT_FILE = SCRIPT_DIR / "merged.m3u"
 TIMEOUT = 30  # seconds
 MAX_RETRIES = 3
+
+# Keywords to filter out (case-insensitive)
+FILTER_KEYWORDS = [
+    "live bdix",
+    "welcome to playz",
+    "playz tv",
+    "playztv"
+]
+
+def should_filter_channel(extinf_line: str, url_line: str) -> bool:
+    """
+    Check if channel should be filtered out.
+    Returns True if channel should be removed.
+    """
+    combined = (extinf_line + " " + url_line).lower()
+    
+    for keyword in FILTER_KEYWORDS:
+        if keyword in combined:
+            logger.debug(f"Filtered out: {keyword} - {extinf_line[:100]}")
+            return True
+    return False
 
 def read_sources(sources_file: Path) -> List[str]:
     """Read URLs from sources.txt file."""
@@ -97,13 +120,16 @@ def parse_m3u_content(content: str) -> Tuple[List[str], List[str]]:
 def merge_playlists(sources: List[str]) -> Tuple[List[str], List[str]]:
     """
     Fetch and merge all playlists from sources.
-    Returns tuple (unique_extinf_lines, unique_url_lines)
+    Filters out unwanted channels.
+    Returns tuple (extinf_lines, url_lines)
     """
     all_extinf = []
     all_urls = []
     seen_urls: Set[str] = set()
+    filtered_count = 0
     
-    logger.info("Starting playlist merge process...")
+    logger.info("Starting playlist merge process with filtering...")
+    logger.info(f"Filtering keywords: {', '.join(FILTER_KEYWORDS)}")
     
     for source_url in sources:
         logger.info(f"Processing: {source_url}")
@@ -116,14 +142,20 @@ def merge_playlists(sources: List[str]) -> Tuple[List[str], List[str]]:
         extinf_lines, url_lines = parse_m3u_content(content)
         logger.info(f"  Found {len(url_lines)} channels in this source")
         
-        # Add unique channels
+        # Add unique channels (filtering unwanted ones)
         for extinf, url in zip(extinf_lines, url_lines):
             if url not in seen_urls:
+                # Check if channel should be filtered
+                if should_filter_channel(extinf, url):
+                    filtered_count += 1
+                    continue
+                
                 seen_urls.add(url)
                 all_extinf.append(extinf)
                 all_urls.append(url)
     
     logger.info(f"Total unique channels merged: {len(all_urls)}")
+    logger.info(f"Total channels filtered out: {filtered_count}")
     return all_extinf, all_urls
 
 def save_merged_playlist(extinf_lines: List[str], url_lines: List[str], output_file: Path):
