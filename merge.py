@@ -2,7 +2,7 @@
 """
 IPTV M3U Merger Script
 Fetches and merges multiple M3U/M3U8 playlists from sources.txt
-Filters out unwanted channels (Live BDIX, Welcome to PlayZ)
+Filters out unwanted channels (BDIX, Welcome to PlayZ)
 """
 
 import requests
@@ -27,12 +27,14 @@ OUTPUT_FILE = SCRIPT_DIR / "merged.m3u"
 TIMEOUT = 30  # seconds
 MAX_RETRIES = 3
 
-# Keywords to filter out (case-insensitive)
-FILTER_KEYWORDS = [
-    "[LIVE] BDIX ♛",
-    "welcome to playz",
-    "playz tv",
-    "playztv"
+# Keywords to filter out (case-insensitive with regex patterns)
+FILTER_PATTERNS = [
+    r'bdix',                    # Matches BDIX anywhere
+    r'\[live\]\s*bdix',         # Matches [LIVE] BDIX, [LIVE]BDIX
+    r'welcome\s*to\s*playz',    # Matches Welcome to PlayZ
+    r'playz\s*tv',              # Matches PlayZ TV
+    r'playztv',                 # Matches playztv
+    r'playz\.pages\.dev',       # Matches playz.pages.dev URLs
 ]
 
 def should_filter_channel(extinf_line: str, url_line: str) -> bool:
@@ -42,9 +44,9 @@ def should_filter_channel(extinf_line: str, url_line: str) -> bool:
     """
     combined = (extinf_line + " " + url_line).lower()
     
-    for keyword in FILTER_KEYWORDS:
-        if keyword in combined:
-            logger.debug(f"Filtered out: {keyword} - {extinf_line[:100]}")
+    for pattern in FILTER_PATTERNS:
+        if re.search(pattern, combined, re.IGNORECASE):
+            logger.debug(f"Filtered out: {pattern} - {extinf_line[:100]}")
             return True
     return False
 
@@ -129,7 +131,7 @@ def merge_playlists(sources: List[str]) -> Tuple[List[str], List[str]]:
     filtered_count = 0
     
     logger.info("Starting playlist merge process with filtering...")
-    logger.info(f"Filtering keywords: {', '.join(FILTER_KEYWORDS)}")
+    logger.info(f"Filtering patterns: {', '.join(FILTER_PATTERNS)}")
     
     for source_url in sources:
         logger.info(f"Processing: {source_url}")
