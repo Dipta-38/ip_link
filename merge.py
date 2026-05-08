@@ -29,7 +29,7 @@ MAX_RETRIES = 3
 
 # Keywords to filter out (case-insensitive)
 FILTER_KEYWORDS = [
-    "[LIVE] BDIX",
+    "[LIVE] BDIX ♛",
     "welcome to playz",
     "playz tv",
     "playztv"
